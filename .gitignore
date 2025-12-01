@@ -40,12 +40,24 @@ ENV/
 # Secrets & Credentials
 .env
 .env.local
+credentials/
+secrets/
+
+# SSL Certificates (exclude all cert files, track only directory structure)
 *.key
 *.pem
 *.crt
-credentials/
-secrets/
+*.csr
+*.srl
+config/*/certs/*
+!config/*/certs/.gitkeep
+config/root-ca/*
+!config/root-ca/.gitkeep
+
+# Config secrets
 config/secrets.yaml
+config/**/*-key.*
+config/**/private/
 
 # Internal development files
 .internal/

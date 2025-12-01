@@ -112,7 +112,7 @@ scrape_configs:
   - job_name: 'ml-inference'
     metrics_path: '/metrics'
     static_configs:
-      - targets: ['ml-inference:8000']
+      - targets: ['ml-inference:8500']
         labels:
           component: 'ai-services'
           service: 'ml-inference'
@@ -120,7 +120,7 @@ scrape_configs:
   - job_name: 'alert-triage'
     metrics_path: '/metrics'
     static_configs:
-      - targets: ['alert-triage:8000']
+      - targets: ['alert-triage:8100']
         labels:
           component: 'ai-services'
           service: 'alert-triage'
@@ -128,7 +128,7 @@ scrape_configs:
   - job_name: 'rag-service'
     metrics_path: '/metrics'
     static_configs:
-      - targets: ['rag-service:8000']
+      - targets: ['rag-service:8300']
         labels:
           component: 'ai-services'
           service: 'rag-service'

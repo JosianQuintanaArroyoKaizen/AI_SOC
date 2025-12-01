@@ -174,14 +174,34 @@ groups:
           description: "Machine learning inference service is unreachable"
 
       - alert: MLInferenceHighLatency
-        expr: histogram_quantile(0.95, rate(ml_inference_duration_seconds_bucket[5m])) > 0.1
+        expr: histogram_quantile(0.95, rate(ml_inference_duration_seconds_bucket[5m])) > 0.5
         for: 5m
         labels:
           severity: warning
           component: ai-services
         annotations:
           summary: "ML inference latency is high"
-          description: "95th percentile inference time is above 100ms (current: {{ $value | humanize }}s)"
+          description: "95th percentile inference time is above 500ms (current: {{ $value | humanize }}s)"
+
+      - alert: APIHighErrorRate
+        expr: (rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m])) * 100 > 5
+        for: 5m
+        labels:
+          severity: critical
+          component: ai-services
+        annotations:
+          summary: "High API error rate on {{ $labels.service }}"
+          description: "API error rate is above 5% (current: {{ $value | humanize }}%)"
+
+      - alert: NoEventsProcessed
+        expr: rate(events_processed_total[5m]) == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: siem
+        annotations:
+          summary: "No events being processed"
+          description: "SIEM has not processed any events in the last 5 minutes"
 
       - alert: AlertTriageDown
         expr: up{job="alert-triage"} == 0
