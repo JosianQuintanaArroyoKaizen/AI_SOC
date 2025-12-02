@@ -41,8 +41,8 @@ services:
 
     volumes:
       - wazuh-indexer-data:/var/lib/wazuh-indexer
-      - ./config/wazuh-indexer/certs:/usr/share/wazuh-indexer/certs:ro
-      - ./config/wazuh-indexer/opensearch.yml:/usr/share/wazuh-indexer/opensearch.yml:ro
+      - ../config/wazuh-indexer/certs:/usr/share/wazuh-indexer/certs:ro
+      - ../config/wazuh-indexer/opensearch.yml:/usr/share/wazuh-indexer/opensearch.yml:ro
 
     networks:
       - siem-backend
@@ -95,13 +95,13 @@ services:
       - wazuh-manager-data:/var/ossec/data
       - wazuh-manager-logs:/var/ossec/logs
       - wazuh-manager-etc:/var/ossec/etc
-      - ./config/wazuh-manager/certs:/etc/ssl:ro
-      - ./config/wazuh-manager/ossec.conf:/wazuh-config-mount/etc/ossec.conf:ro
+      - ../config/wazuh-manager/certs:/etc/ssl:ro
+      - ../config/wazuh-manager/ossec.conf:/wazuh-config-mount/etc/ossec.conf:ro
       # Custom rules and decoders
-      - ./config/wazuh-manager/rules:/var/ossec/etc/rules:rw
-      - ./config/wazuh-manager/decoders:/var/ossec/etc/decoders:rw
+      - ../config/wazuh-manager/rules:/var/ossec/etc/rules:rw
+      - ../config/wazuh-manager/decoders:/var/ossec/etc/decoders:rw
       # Dataset replay logs
-      - ./datasets/logs:/var/log/external:ro
+      - ../datasets/logs:/var/log/external:ro
 
     networks:
       - siem-backend
@@ -152,8 +152,8 @@ services:
       - "SERVER_SSL_KEY=/usr/share/wazuh-dashboard/certs/dashboard-key.pem"
 
     volumes:
-      - ./config/wazuh-dashboard/certs:/usr/share/wazuh-dashboard/certs:ro
-      - ./config/wazuh-dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml:ro
+      - ../config/wazuh-dashboard/certs:/usr/share/wazuh-dashboard/certs:ro
+      - ../config/wazuh-dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml:ro
 
     networks:
       - siem-frontend
@@ -201,8 +201,8 @@ services:
     volumes:
       - suricata-logs:/var/log/suricata
       - suricata-rules:/var/lib/suricata/rules
-      - ./config/suricata/suricata.yaml:/etc/suricata/suricata.yaml:ro
-      - ./config/suricata/rules:/etc/suricata/rules:ro
+      - ../config/suricata/suricata.yaml:/etc/suricata/suricata.yaml:ro
+      - ../config/suricata/rules:/etc/suricata/rules:ro
 
     command: >
       /bin/sh -c "
@@ -248,8 +248,8 @@ services:
     volumes:
       - zeek-logs:/usr/local/zeek/logs
       - zeek-spool:/usr/local/zeek/spool
-      - ./config/zeek/site:/usr/local/zeek/share/zeek/site:ro
-      - ./config/zeek/local.zeek:/usr/local/zeek/share/zeek/site/local.zeek:ro
+      - ../config/zeek/site:/usr/local/zeek/share/zeek/site:ro
+      - ../config/zeek/local.zeek:/usr/local/zeek/share/zeek/site/local.zeek:ro
 
     command: >
       /bin/sh -c "
@@ -293,8 +293,8 @@ services:
       - "KIBANA_HOST=https://wazuh-dashboard:5601"
 
     volumes:
-      - ./config/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
-      - ./config/filebeat/certs:/usr/share/filebeat/certs:ro
+      - ../config/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ../config/filebeat/certs:/usr/share/filebeat/certs:ro
       - suricata-logs:/var/log/suricata:ro
       - zeek-logs:/var/log/zeek:ro
       - filebeat-data:/usr/share/filebeat/data

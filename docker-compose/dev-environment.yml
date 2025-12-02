@@ -28,7 +28,7 @@ services:
 
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./config/postgres/init-scripts:/docker-entrypoint-initdb.d:ro
+      - ../config/postgres/init-scripts:/docker-entrypoint-initdb.d:ro
       # Backup directory
       - ./backups/postgres:/backups
 
@@ -86,7 +86,7 @@ services:
 
     volumes:
       - redis-data:/data
-      - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ../config/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
 
     networks:
       - dev-backend
@@ -156,7 +156,7 @@ services:
       - ../notebooks:/home/${JUPYTER_USER:-jovyan}/work/notebooks
       - ../services:/home/${JUPYTER_USER:-jovyan}/work/services:ro
       # Custom requirements
-      - ./config/jupyter/requirements.txt:/tmp/requirements.txt:ro
+      - ../config/jupyter/requirements.txt:/tmp/requirements.txt:ro
 
     networks:
       - dev-backend
