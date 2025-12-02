@@ -116,7 +116,7 @@ services:
     volumes:
       - thehive-data:/opt/thehive/data
       - thehive-index:/opt/thehive/index
-      - .../config/thehive/application.conf:/etc/thehive/application.conf:ro
+      - ../config/thehive/application.conf:/etc/thehive/application.conf:ro
 
     networks:
       - soar-backend
@@ -183,7 +183,7 @@ services:
     volumes:
       - cortex-data:/opt/cortex/data
       - cortex-jobs:/tmp/cortex-jobs
-      - .../config/cortex/application.conf:/etc/cortex/application.conf:ro
+      - ../config/cortex/application.conf:/etc/cortex/application.conf:ro
 
     networks:
       - soar-backend

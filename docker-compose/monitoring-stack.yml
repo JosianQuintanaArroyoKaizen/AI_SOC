@@ -35,8 +35,8 @@ services:
       - '--web.enable-admin-api'
 
     volumes:
-      - .../config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - .../config/prometheus/alerts:/etc/prometheus/alerts:ro
+      - ../config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../config/prometheus/alerts:/etc/prometheus/alerts:ro
       - prometheus-data:/prometheus
 
     networks:
@@ -86,8 +86,8 @@ services:
 
     volumes:
       - grafana-data:/var/lib/grafana
-      - .../config/grafana/provisioning:/etc/grafana/provisioning:ro
-      - .../config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ../config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../config/grafana/dashboards:/var/lib/grafana/dashboards:ro
 
     networks:
       - monitoring
@@ -130,7 +130,7 @@ services:
       - '--cluster.listen-address='
 
     volumes:
-      - .../config/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ../config/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager-data:/alertmanager
 
     networks:
@@ -239,7 +239,7 @@ services:
     command: -config.file=/etc/loki/local-config.yaml
 
     volumes:
-      - .../config/loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - ../config/loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
       - loki-data:/loki
 
     networks:
@@ -271,7 +271,7 @@ services:
     restart: unless-stopped
 
     volumes:
-      - .../config/promtail/promtail-config.yaml:/etc/promtail/config.yml:ro
+      - ../config/promtail/promtail-config.yaml:/etc/promtail/config.yml:ro
       - /var/log:/var/log:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
 

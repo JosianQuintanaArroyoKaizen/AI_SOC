@@ -35,8 +35,8 @@ services:
       - SURICATA_OPTIONS=-i ${MONITOR_INTERFACE:-eth0}
 
     volumes:
-      - .../config/suricata/suricata.yaml:/etc/suricata/suricata.yaml:ro
-      - .../config/suricata/rules:/etc/suricata/rules:ro
+      - ../config/suricata/suricata.yaml:/etc/suricata/suricata.yaml:ro
+      - ../config/suricata/rules:/etc/suricata/rules:ro
       - suricata-logs:/var/log/suricata
       - suricata-data:/var/lib/suricata
 
@@ -79,8 +79,8 @@ services:
       - ZEEK_INTERFACE=${MONITOR_INTERFACE:-eth0}
 
     volumes:
-      - .../config/zeek/local.zeek:/usr/local/zeek/share/zeek/site/local.zeek:ro
-      - .../config/zeek/node.cfg:/usr/local/zeek/etc/node.cfg:ro
+      - ../config/zeek/local.zeek:/usr/local/zeek/share/zeek/site/local.zeek:ro
+      - ../config/zeek/node.cfg:/usr/local/zeek/etc/node.cfg:ro
       - zeek-logs:/usr/local/zeek/logs
       - zeek-spool:/usr/local/zeek/spool
 
@@ -114,8 +114,8 @@ services:
     user: root
 
     volumes:
-      - .../config/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
-      - .../config/filebeat/modules.d:/usr/share/filebeat/modules.d:ro
+      - ../config/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ../config/filebeat/modules.d:/usr/share/filebeat/modules.d:ro
       - suricata-logs:/var/log/suricata:ro
       - zeek-logs:/var/log/zeek:ro
       - filebeat-data:/usr/share/filebeat/data
@@ -151,8 +151,8 @@ services:
     hostname: suricata-update
 
     volumes:
-      - .../config/suricata/suricata.yaml:/etc/suricata/suricata.yaml:ro
-      - .../config/suricata/rules:/var/lib/suricata/rules
+      - ../config/suricata/suricata.yaml:/etc/suricata/suricata.yaml:ro
+      - ../config/suricata/rules:/var/lib/suricata/rules
 
     command: ["suricata-update", "--data-dir", "/var/lib/suricata"]
 

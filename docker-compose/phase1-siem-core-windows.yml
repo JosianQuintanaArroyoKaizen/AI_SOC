@@ -37,8 +37,8 @@ services:
 
     volumes:
       - wazuh-indexer-data:/var/lib/wazuh-indexer
-      - .../config/wazuh-indexer/certs:/usr/share/wazuh-indexer/certs:ro
-      - .../config/wazuh-indexer/opensearch.yml:/usr/share/wazuh-indexer/opensearch.yml:ro
+      - ../config/wazuh-indexer/certs:/usr/share/wazuh-indexer/certs:ro
+      - ../config/wazuh-indexer/opensearch.yml:/usr/share/wazuh-indexer/opensearch.yml:ro
 
     networks:
       - siem-backend
@@ -89,10 +89,10 @@ services:
       - wazuh-manager-data:/var/ossec/data
       - wazuh-manager-logs:/var/ossec/logs
       - wazuh-manager-etc:/var/ossec/etc
-      - .../config/wazuh-manager/certs:/etc/ssl:ro
+      - ../config/wazuh-manager/certs:/etc/ssl:ro
       # ossec.conf mount disabled - using container defaults (custom config causing XML parse errors)
-      # - .../config/wazuh-manager/ossec.conf:/wazuh-config-mount/etc/ossec.conf:ro
-      - .../datasets/logs:/var/log/external:ro
+      # - ../config/wazuh-manager/ossec.conf:/wazuh-config-mount/etc/ossec.conf:ro
+      - ../datasets/logs:/var/log/external:ro
 
     networks:
       - siem-backend
@@ -141,8 +141,8 @@ services:
       - "SERVER_SSL_KEY=/usr/share/wazuh-dashboard/certs/dashboard-key.pem"
 
     volumes:
-      - .../config/wazuh-dashboard/certs:/usr/share/wazuh-dashboard/certs:ro
-      - .../config/wazuh-dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml:ro
+      - ../config/wazuh-dashboard/certs:/usr/share/wazuh-dashboard/certs:ro
+      - ../config/wazuh-dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml:ro
 
     networks:
       - siem-frontend
