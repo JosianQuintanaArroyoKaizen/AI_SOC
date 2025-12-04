@@ -81,11 +81,15 @@ Resources:
             "Rules": [
               {
                 "ResourceType": "collection",
-                "Resource": ["collection/${ProjectName}-${Environment}-alerts"]
-              },
-              {
-                "ResourceType": "dashboard",
-                "Resource": ["collection/${ProjectName}-${Environment}-alerts"]
+                "Resource": ["collection/${ProjectName}-${Environment}-alerts"],
+                "Permission": [
+                  "aoss:CreateCollectionItems",
+                  "aoss:UpdateCollectionItems",
+                  "aoss:DescribeCollectionItems",
+                  "aoss:DeleteCollectionItems",
+                  "aoss:ReadDocument",
+                  "aoss:WriteDocument"
+                ]
               }
             ],
             "Principal": [
