@@ -48,8 +48,8 @@ Resources:
               ],
               "KmsArn": "${KmsArnValue}"
             }
-            - KmsArnValue: !ImportValue
-              'Fn::Sub': '${ProjectName}-${Environment}-KmsKeyArn'
+          - KmsArnValue: !ImportValue
+              Fn::Sub: '${ProjectName}-${Environment}-KmsKeyArn'
 
   CollectionNetworkPolicy:
     Type: AWS::OpenSearchServerless::SecurityPolicy
