@@ -40,13 +40,10 @@ Resources:
                 {
                   "ResourceType": "collection",
                   "Resource": ["collection/${ProjectName}-${Environment}-alerts"]
-                },
-                {
-                  "ResourceType": "dashboard",
-                  "Resource": ["collection/${ProjectName}-${Environment}-alerts"]
                 }
               ],
-              "KmsArn": "${KmsArnValue}"
+              "AWSOwnedKey": false,
+              "KmsARN": "${KmsArnValue}"
             }
           - KmsArnValue: !ImportValue
               Fn::Sub: '${ProjectName}-${Environment}-KmsKeyArn'
