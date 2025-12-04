@@ -1,0 +1,6 @@
+{
+  "ProjectName": "ai-soc",
+  "Environment": "prod",
+  "AlertEmail": "soc@example.com",
+  "KinesisShardCount": 4
+}

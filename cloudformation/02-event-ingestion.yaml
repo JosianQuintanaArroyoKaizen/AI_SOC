@@ -1,0 +1,162 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Event ingestion resources for AI-SOC (Kinesis, Lambda, EventBridge)
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: ai-soc
+    Description: Prefix applied to all resources
+
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Deployment environment identifier
+
+  KinesisShardCount:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 64
+    Description: Number of shards for the security event stream
+
+Resources:
+  SecurityEventsStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-security-events'
+      ShardCount: !Ref KinesisShardCount
+      RetentionPeriodHours: 24
+      StreamEncryption:
+        EncryptionType: KMS
+        KeyId: !ImportValue
+          'Fn::Sub': '${ProjectName}-${Environment}-KmsKeyId'
+
+  EventNormalizerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-event-normalizer-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: KinesisAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kinesis:PutRecord
+                  - kinesis:PutRecords
+                Resource: !GetAtt SecurityEventsStream.Arn
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource: !ImportValue
+                  'Fn::Sub': '${ProjectName}-${Environment}-KmsKeyArn'
+
+  EventNormalizerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-event-normalizer'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt EventNormalizerRole.Arn
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          KINESIS_STREAM_NAME: !Ref SecurityEventsStream
+          PROJECT_NAME: !Ref ProjectName
+          ENVIRONMENT: !Ref Environment
+      Code:
+        ZipFile: |
+          def handler(event, context):
+              return {'statusCode': 200, 'body': 'Placeholder - upload package via CI/CD'}
+
+  EventNormalizerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${EventNormalizerFunction}'
+      RetentionInDays: 14
+
+  GuardDutyRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-guardduty-findings'
+      Description: Capture GuardDuty findings and route to the normalizer Lambda
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.guardduty
+        detail-type:
+          - GuardDuty Finding
+      Targets:
+        - Arn: !GetAtt EventNormalizerFunction.Arn
+          Id: EventNormalizerTarget
+
+  SecurityHubRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-securityhub-findings'
+      Description: Capture Security Hub findings
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.securityhub
+        detail-type:
+          - Security Hub Findings - Imported
+      Targets:
+        - Arn: !GetAtt EventNormalizerFunction.Arn
+          Id: EventNormalizerTarget
+
+  EventNormalizerGuardDutyPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref EventNormalizerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt GuardDutyRule.Arn
+
+  EventNormalizerSecurityHubPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref EventNormalizerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt SecurityHubRule.Arn
+
+Outputs:
+  KinesisStreamArn:
+    Description: ARN of the security events stream
+    Value: !GetAtt SecurityEventsStream.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-KinesisStreamArn'
+
+  KinesisStreamName:
+    Description: Name of the security events stream
+    Value: !Ref SecurityEventsStream
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-KinesisStreamName'
+
+  EventNormalizerFunctionArn:
+    Description: ARN of the event normalizer Lambda function
+    Value: !GetAtt EventNormalizerFunction.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-EventNormalizerArn'
+
+  EventNormalizerFunctionName:
+    Description: Name of the event normalizer Lambda function
+    Value: !Ref EventNormalizerFunction
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-EventNormalizerName'

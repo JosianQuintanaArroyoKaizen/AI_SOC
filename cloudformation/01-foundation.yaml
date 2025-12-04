@@ -1,0 +1,142 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Foundation resources for the AI-SOC platform (S3, KMS, SNS)
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: ai-soc
+    Description: Prefix applied to all resources
+
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Deployment environment identifier
+
+  AlertEmail:
+    Type: String
+    Description: Email address subscribed to the SNS alert topic
+
+Resources:
+  ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-${Environment}-artifacts-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldVersions
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 30
+
+  LogsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-${Environment}-logs-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireLogs
+            Status: Enabled
+            ExpirationInDays: 90
+
+  EncryptionKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'AI-SOC key for ${ProjectName}-${Environment}'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowRootAccount
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: AllowServicesToEncrypt
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+                - kinesis.amazonaws.com
+                - s3.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey
+              - kms:DescribeKey
+            Resource: '*'
+
+  EncryptionKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${ProjectName}-${Environment}'
+      TargetKeyId: !Ref EncryptionKey
+
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectName}-${Environment}-alerts'
+      DisplayName: !Sub '${ProjectName}-${Environment} Alerts'
+      KmsMasterKeyId: !Ref EncryptionKey
+
+  AlertTopicSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: email
+      TopicArn: !Ref AlertTopic
+      Endpoint: !Ref AlertEmail
+
+Outputs:
+  ArtifactsBucketName:
+    Description: S3 bucket that stores Lambda packages and CloudFormation templates
+    Value: !Ref ArtifactsBucket
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-ArtifactsBucket'
+
+  LogsBucketName:
+    Description: S3 bucket that stores platform logs
+    Value: !Ref LogsBucket
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-LogsBucket'
+
+  KmsKeyId:
+    Description: ID of the shared KMS key
+    Value: !Ref EncryptionKey
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-KmsKeyId'
+
+  KmsKeyArn:
+    Description: ARN of the shared KMS key
+    Value: !GetAtt EncryptionKey.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-KmsKeyArn'
+
+  AlertTopicArn:
+    Description: SNS topic ARN for alert notifications
+    Value: !Ref AlertTopic
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-AlertTopicArn'

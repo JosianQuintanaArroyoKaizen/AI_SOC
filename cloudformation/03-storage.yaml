@@ -1,0 +1,160 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Storage resources for AI-SOC (OpenSearch Serverless + DynamoDB)
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: ai-soc
+    Description: Prefix applied to all resources
+
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Deployment environment identifier
+
+Resources:
+  SecurityAlertsCollection:
+    Type: AWS::OpenSearchServerless::Collection
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-alerts'
+      Type: SEARCH
+      Description: Normalized security alerts and findings
+    DependsOn:
+      - CollectionEncryptionPolicy
+      - CollectionNetworkPolicy
+
+  CollectionEncryptionPolicy:
+    Type: AWS::OpenSearchServerless::SecurityPolicy
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-encryption-policy'
+      Type: encryption
+      Policy:
+        Fn::Sub:
+          - |
+            {
+              "Rules": [
+                {
+                  "ResourceType": "collection",
+                  "Resource": ["collection/${ProjectName}-${Environment}-alerts"]
+                },
+                {
+                  "ResourceType": "dashboard",
+                  "Resource": ["collection/${ProjectName}-${Environment}-alerts"]
+                }
+              ],
+              "KmsArn": "${KmsArnValue}"
+            }
+            - KmsArnValue: !ImportValue
+              'Fn::Sub': '${ProjectName}-${Environment}-KmsKeyArn'
+
+  CollectionNetworkPolicy:
+    Type: AWS::OpenSearchServerless::SecurityPolicy
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-network-policy'
+      Type: network
+      Policy: !Sub |
+        [
+          {
+            "Rules": [
+              {
+                "ResourceType": "collection",
+                "Resource": ["collection/${ProjectName}-${Environment}-alerts"]
+              },
+              {
+                "ResourceType": "dashboard",
+                "Resource": ["collection/${ProjectName}-${Environment}-alerts"]
+              }
+            ],
+            "AllowFromPublic": true
+          }
+        ]
+
+  CollectionAccessPolicy:
+    Type: AWS::OpenSearchServerless::AccessPolicy
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-access-policy'
+      Type: data
+      Policy: !Sub |
+        [
+          {
+            "Rules": [
+              {
+                "ResourceType": "collection",
+                "Resource": ["collection/${ProjectName}-${Environment}-alerts"]
+              },
+              {
+                "ResourceType": "dashboard",
+                "Resource": ["collection/${ProjectName}-${Environment}-alerts"]
+              }
+            ],
+            "Principal": [
+              "arn:aws:iam::${AWS::AccountId}:root",
+              "arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-event-normalizer-role"
+            ],
+            "Description": "Allow root and event normalizer to access OpenSearch"
+          }
+        ]
+
+  StateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-${Environment}-state'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: alert_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: alert_id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        Enabled: true
+        AttributeName: ttl
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+Outputs:
+  OpenSearchCollectionEndpoint:
+    Description: OpenSearch collection endpoint
+    Value: !GetAtt SecurityAlertsCollection.CollectionEndpoint
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-OpenSearchEndpoint'
+
+  OpenSearchCollectionDashboardEndpoint:
+    Description: OpenSearch dashboards endpoint
+    Value: !GetAtt SecurityAlertsCollection.DashboardEndpoint
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-OpenSearchDashboardEndpoint'
+
+  OpenSearchCollectionArn:
+    Description: ARN of the OpenSearch collection
+    Value: !GetAtt SecurityAlertsCollection.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-OpenSearchArn'
+
+  StateTableName:
+    Description: DynamoDB state table name
+    Value: !Ref StateTable
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-StateTableName'
+
+  StateTableArn:
+    Description: DynamoDB state table ARN
+    Value: !GetAtt StateTable.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-StateTableArn'
+
+  StateTableStreamArn:
+    Description: DynamoDB stream ARN for state table
+    Value: !GetAtt StateTable.StreamArn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-StateTableStreamArn'
