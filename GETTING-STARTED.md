@@ -1,261 +1,161 @@
-# Getting Started with AI-SOC
+# Getting Started with AI-SOC (CI/CD Edition)
 
-## System Deployment Guide
+The quickest way to experience AI-SOC is now through **GitHub Actions + AWS CloudFormation** in `eu-central-1`. Local Docker orchestration has been retired; every environment is created as infrastructure-as-code and deployed through the automated pipelines documented in `AI_GUIDE_KAIZEN.md` and `CICD_GUIDE.md`.
 
-This document provides comprehensive instructions for deploying the AI-Augmented Security Operations Center (AI-SOC) platform. The deployment process has been designed to minimize technical complexity while maintaining enterprise-grade security and performance standards.
-
----
-
-## Prerequisites
-
-### Required Software Components
-
-The AI-SOC platform requires two foundational software packages for operation. Both components are freely available and must be installed prior to system deployment.
-
-### 1. Docker Desktop
-
-Docker Desktop provides the containerization infrastructure necessary for AI-SOC service orchestration. The platform utilizes Docker Compose for multi-container deployment and management.
-
-**Installation Procedure (Windows):**
-1. Navigate to https://www.docker.com/products/docker-desktop/
-2. Execute the installer package
-3. Select "Use WSL 2" (Windows Subsystem for Linux 2) when prompted
-4. Complete system restart as required
-5. Verify Docker Desktop initialization via system tray indicator
-
-**Minimum System Requirements:**
-- Memory: 16GB RAM (32GB recommended for optimal performance)
-- Storage: 50GB available disk space
-- Operating System: Windows 10/11 (Professional or Home edition)
-
-### 2. Python Runtime Environment
-
-Python 3.x serves as the runtime environment for the graphical launcher interface and web dashboard components.
-
-**Installation Procedure:**
-1. Download installer from https://www.python.org/downloads/
-2. Execute installer package
-3. Select "Add Python to PATH" during installation (critical requirement)
-4. Complete installation using default configuration
-
-**Note:** The "Add to PATH" option ensures command-line accessibility for the launcher scripts.
+Use this guide as the fast path to configure accounts, trigger the workflows, and validate your first deployment.
 
 ---
 
-## System Initialization
+## 1. Prerequisites
 
-### Primary Deployment Method
+### Accounts & Permissions
+- **AWS Account** with permissions to create IAM, CloudFormation, Lambda, SageMaker, OpenSearch, and Step Functions resources in `eu-central-1`.
+- **GitHub Repository Access** with admin rights to configure Actions secrets and OIDC trust (fork or clone `zhadyz/AI_SOC`).
 
-The AI-SOC platform provides a graphical launcher interface for simplified deployment. This method is recommended for standard operational use.
+### Local Tooling (for validation or troubleshooting)
+- Git 2.40+
+- Python 3.11 (used for optional Lambda packaging tests)
+- AWS CLI v2 with a profile that can create stacks in `eu-central-1`
+- cfn-lint / cfn-guard (optional but recommended)
 
-**Execution Procedure:**
+> ⚠️ Docker Desktop is **not** required. All services run in AWS once deployed.
 
-1. Navigate to the AI_SOC installation directory
-2. Execute `START-AI-SOC.bat` via double-click operation
-3. The graphical control interface will initialize
-4. Select "START AI-SOC" to initiate service deployment
-5. Allow 1-2 minutes for complete service initialization
-6. Select "Open Dashboard" to access the web-based monitoring interface
+---
 
-**Expected Behavior:** The launcher will automatically validate prerequisites, install required Python dependencies, and initialize the control interface.
+## 2. Bootstrap Checklist
 
-### Alternative Deployment Method
+| Step | What | Reference |
+|------|------|-----------|
+| 1 | Clone repo locally (`git clone https://github.com/YOUR_ORG/AI_SOC.git`) | This guide |
+| 2 | Deploy the GitHub OIDC stack (`cloudformation/00-github-oidc.yaml`) so Actions can assume an AWS role | `AI_GUIDE_KAIZEN.md` |
+| 3 | Create GitHub Secrets: `AWS_ROLE_TO_ASSUME`, `AWS_ACCOUNT_ID`, `AWS_REGION=eu-central-1`, `ALERT_EMAIL` | `CICD_GUIDE.md` |
+| 4 | (Optional) Run `scripts/validate-cfn.sh` locally to lint templates before pushing | local workstation |
+| 5 | Push changes/parameters to `main`/`develop` or trigger `workflow_dispatch` to deploy | GitHub Actions |
+| 6 | Monitor stack creation in CloudFormation console (root stack + nested stacks) | AWS Console |
+| 7 | Validate services (Lambda ARNs, SageMaker endpoint, Step Functions state machines, OpenSearch collection) | AWS Console |
 
-For command-line operation, the launcher may be invoked directly:
+---
+
+## 3. Repository Tour
+
+- `cloudformation/` – Root + nested stack templates (foundation, ingestion, storage, ML, orchestration, monitoring).
+- `lambda/` – Python sources packaged by the `deploy-lambdas` workflow.
+- `.github/workflows/` – GitHub Actions for infrastructure deploy, Lambda packaging, and automated testing.
+- `docs/` – MkDocs site with architecture, deployment, and security deep dives.
+
+When in doubt, consult `AI_GUIDE_KAIZEN.md` for architectural rationale and `CICD_GUIDE.md` for exact workflow configuration.
+
+---
+
+## 4. Configure AWS <-> GitHub Trust
+
+1. Sign in to AWS with an administrator role.
+2. Deploy the OIDC bootstrap stack (one-time):
 
 ```bash
-python AI-SOC-Launcher.py
+aws cloudformation deploy \
+	--template-file cloudformation/00-github-oidc.yaml \
+	--stack-name github-oidc-setup \
+	--parameter-overrides \
+			GitHubOrg=YOUR_ORG \
+			GitHubRepo=AI_SOC \
+	--capabilities CAPABILITY_NAMED_IAM \
+	--region eu-central-1
 ```
 
-This method provides identical functionality through a terminal-based workflow.
+3. Capture the exported `RoleArn` and store it in the repository secret `AWS_ROLE_TO_ASSUME`.
 
 ---
 
-## Control Interface Operations
+## 5. Configure GitHub Secrets & Variables
 
-The graphical control interface provides comprehensive system management capabilities through an integrated dashboard.
+Navigate to **Settings → Secrets and variables → Actions** and add:
 
-### Status Indicators
+| Name | Value |
+|------|-------|
+| `AWS_ACCOUNT_ID` | Your 12-digit account ID |
+| `AWS_REGION` | `eu-central-1` |
+| `AWS_ROLE_TO_ASSUME` | Role ARN from the bootstrap stack |
+| `ALERT_EMAIL` | Distribution list for SNS alerts |
 
-The interface employs color-coded status indicators for real-time system health monitoring:
-
-- **Green**: All services operational and healthy
-- **Yellow**: Services in initialization state (transient)
-- **Red**: Service failure or attention required (consult system log)
-
-### Control Functions
-
-The interface provides the following operational controls:
-
-- **START AI-SOC**: Initiates all platform services via Docker Compose orchestration
-- **STOP AI-SOC**: Gracefully terminates all running services
-- **Open Dashboard**: Launches the web-based monitoring interface in the default browser
-
-### Service Monitoring
-
-The status panel displays real-time operational state for all platform components:
-
-- Wazuh Indexer (OpenSearch database backend)
-- Wazuh Manager (SIEM core and security event processing)
-- ML Inference (Machine learning threat detection engine)
-- Alert Triage (Intelligent alert prioritization service)
-- RAG Service (Retrieval-Augmented Generation knowledge base)
-
-### System Log
-
-The integrated log console displays real-time system events, service initialization progress, and diagnostic information.
+Optional organization-level secrets can store shared ARNs or artifact bucket names if you operate multiple environments.
 
 ---
 
-## Web-Based Monitoring Interface
+## 6. Prepare Environment Parameters
 
-Following successful system initialization, the web dashboard provides comprehensive real-time monitoring capabilities.
-
-**Access URL:** http://localhost:3000
-
-### Dashboard Features
-
-The monitoring interface provides the following information panels:
-
-- **System Status**: Overall platform health indicator (color-coded: green = operational, yellow = initializing, red = service failure)
-- **Service Count**: Quantitative metric displaying number of active services versus total deployed services
-- **Service Details**: Individual health status for each microservice component
-- **Auto-Refresh**: Automatic status updates every 5 seconds via asynchronous polling
+Each environment (`dev`, `staging`, `prod`) consumes a JSON parameter file under `cloudformation/parameters/`. Update values such as VPC IDs, subnet lists, SageMaker instance sizes, and Step Functions log buckets. Keep sensitive data in AWS SSM Parameter Store or Secrets Manager instead of committing plaintext secrets.
 
 ---
 
-## Troubleshooting Guide
+## 7. Trigger the Pipelines
 
-### Docker Not Installed
+### Automatic (recommended)
+1. Commit your template or Lambda changes.
+2. Push to `main` or `develop` (or open a PR targeting `main`).
+3. GitHub Actions runs in this order:
+	 - `deploy-infra.yml`: validates templates, deploys foundation + nested stacks.
+	 - `deploy-lambdas.yml`: packages each Lambda and uploads artifacts to the S3 bucket from the foundation stack.
+	 - `run-tests.yml`: executes unit + integration suites; failures block promotion.
 
-**Symptom:** Launcher reports Docker is not installed or not found.
-
-**Resolution:**
-- Complete Docker Desktop installation as described in Prerequisites section
-- Verify Docker Desktop is running via system tray indicator
-
-### Docker Service Not Running
-
-**Symptom:** Services fail to start with Docker daemon error.
-
-**Resolution:**
-- Locate Docker Desktop icon in system tray
-- Right-click and select "Start" to initialize Docker daemon
-- Wait for status message "Docker Desktop is running"
-
-### Python Runtime Not Found
-
-**Symptom:** Batch launcher reports Python is not installed or not in PATH.
-
-**Resolution:**
-- Reinstall Python runtime environment
-- Ensure "Add Python to PATH" option is selected during installation
-
-### Service Initialization Failures
-
-**Symptom:** One or more services fail to start or remain in unhealthy state.
-
-**Diagnostic Steps:**
-1. Verify Docker Desktop is operational
-2. Confirm system meets minimum RAM requirements (16GB)
-3. Close resource-intensive applications to free system memory
-4. Attempt system restart to clear transient resource constraints
-
-### General Recovery Procedure
-
-For persistent initialization failures:
-
-1. Execute STOP AI-SOC to gracefully terminate all services
-2. Wait 30 seconds for complete service shutdown
-3. Execute START AI-SOC to reinitialize deployment
+### Manual (workflow_dispatch)
+Use the Actions tab → select the workflow → **Run workflow** → choose `dev`, `staging`, or `prod`. This is useful for hotfix redeployments without new commits.
 
 ---
 
-## Platform Architecture Overview
+## 8. Validate the Deployment
 
-### Service Component Descriptions
+1. **CloudFormation Console** (`eu-central-1`): ensure `ai-soc-foundation-*`, `ai-soc-ingestion-*`, `ai-soc-storage-*`, etc., show `CREATE_COMPLETE`.
+2. **S3**: verify the artifacts bucket contains Lambda ZIPs under `lambda/<function>.zip`.
+3. **Lambda**: confirm environment variables and last modified times reflect your deployment.
+4. **SageMaker Serverless Endpoint**: check the inference endpoint status is `InService`.
+5. **OpenSearch Serverless**: ensure the collection is active and accessible through the network policy defined in `03-storage.yaml`.
+6. **Step Functions**: run a test execution through the orchestration state machine to validate event flow end-to-end.
 
-The AI-SOC platform consists of six primary microservice components operating in coordinated fashion:
-
-### Wazuh Indexer (Data Persistence Layer)
-OpenSearch-based database backend providing persistent storage for security events, logs, and analytical data. Implements distributed search and aggregation capabilities for historical threat analysis.
-
-### Wazuh Manager (SIEM Core)
-Central security information and event management engine. Performs real-time log collection, correlation, and security event processing. Integrates with network agents for distributed monitoring.
-
-### ML Inference Engine (Threat Detection)
-Machine learning-based intrusion detection system trained on CICIDS2017 dataset. Achieves 99.28% classification accuracy for network-based threats using ensemble classification methods.
-
-### Alert Triage Service (Prioritization Layer)
-Intelligent alert filtering and prioritization service. Reduces false positive rates through multi-factor severity assessment and contextual analysis.
-
-### RAG Service (Knowledge Augmentation)
-Retrieval-Augmented Generation service providing contextual threat intelligence. Supplies natural language explanations for detected security events using vector-based knowledge retrieval.
-
-### ChromaDB (Vector Database)
-Embedding storage for RAG service. Maintains vector representations of threat intelligence data for semantic similarity search and knowledge retrieval operations.
+For expected outputs and stack relationships, review `AI_GUIDE_KAIZEN.md` (Architecture → Stack Hierarchy).
 
 ---
 
-## Advanced Operations
+## 9. Day-2 Operations
 
-Following successful deployment, the platform provides access to individual service endpoints for advanced integration:
-
-1. **Wazuh Web Interface**: https://localhost:443 (SIEM dashboard and configuration)
-2. **ML Inference API**: http://localhost:8500 (threat classification endpoint)
-3. **Alert Triage API**: http://localhost:8100 (alert management interface)
-
----
-
-## Operational Best Practices
-
-### Recommended Procedures
-
-- Maintain Docker Desktop in running state during AI-SOC operation
-- Allow 2-3 minutes for complete service initialization before accessing endpoints
-- Monitor system health via web dashboard at regular intervals
-- Execute graceful shutdown via STOP AI-SOC when platform is not required (conserves system resources)
-
-### Prohibited Operations
-
-- Do not terminate Docker Desktop while AI-SOC services are running (may cause data corruption)
-- Do not manually stop containers via Docker CLI (bypasses graceful shutdown procedures)
-- Do not attempt deployment on systems with less than 16GB RAM (insufficient resources)
-- Do not interrupt service initialization sequence (allow full startup cycle)
+- **Change Management**: every pull request should include template diffs and `cfn-lint` output. Use the `cfn-plan` job (if enabled) or `aws cloudformation create-change-set` locally to preview breaking changes.
+- **Rollback**: re-run the `deploy-infra` workflow with the last known-good commit or delete the failed stack change set to maintain stability.
+- **Secrets Rotation**: store sensitive parameters in AWS Secrets Manager and reference them via dynamic resolution in templates.
+- **Monitoring**: the `06-monitoring.yaml` stack creates CloudWatch dashboards and alarms. Subscribe additional targets to the exported SNS topic for 24/7 alerting.
 
 ---
 
-## Deployment Verification
+## 10. Troubleshooting
 
-Upon successful deployment, verify the following conditions are met:
+### GitHub Actions Cannot Assume Role
+- Confirm the OIDC provider thumbprint and repository filters in `00-github-oidc.yaml` match your org/repo.
+- Re-run the bootstrap stack after renaming the GitHub repository.
 
-1. Docker Desktop operational and running
-2. Python runtime environment installed with PATH configuration
-3. START-AI-SOC.bat executed successfully
-4. All services reporting healthy status in control interface
-5. Web dashboard accessible and displaying current system state
-6. No error messages in system log console
+### CloudFormation Stack Failure
+- Use `aws cloudformation describe-stack-events --stack-name ai-soc-foundation-dev` for detailed failure reasons.
+- Ensure service quotas (Lambda concurrency, SageMaker endpoint count, VPC limits) are not exceeded in `eu-central-1`.
 
-For diagnostic assistance, consult the integrated log console or refer to the Troubleshooting Guide section.
+### Lambda Packaging Issues
+- Check the `deploy-lambdas` workflow logs for missing dependencies or mismatched Python versions.
+- Use `python -m pip install -r lambda/<function>/requirements.txt -t lambda/<function>` locally to reproduce packaging errors.
+
+### Integration Tests Failing
+- Review `tests/integration/test_workflow.py` for required environment variables.
+- Ensure GuardDuty and Security Hub are enabled in the AWS account so sample events flow through EventBridge.
 
 ---
 
-## Security Configuration
+## 11. FAQ
 
-### Default Credentials
+**What happened to Docker Desktop and the local launcher?**  
+The platform now deploys directly into AWS. Use the updated `AI-SOC-Launcher.py` (Deployment Assistant) if you want a desktop helper for running pre-flight checks, linting templates, or opening the GitHub Actions dashboard.
 
-The platform ships with default authentication credentials defined in the `.env` configuration file. These credentials are suitable for development and testing environments.
+**Can I still run parts of the stack locally?**  
+Yes, but it is no longer the supported path. If you need local experiments, run individual Lambda handlers with `pytest` or the AWS SAM CLI without altering this guide.
 
-### Production Security Requirements
+**Why eu-central-1?**  
+All reference templates, SNS topics, SageMaker serverless, and OpenSearch Serverless quotas were validated for `eu-central-1`. Adjust the `AWS_REGION` secret and parameter files only if you have confirmed service availability in another region.
 
-For production deployment or external network exposure, the following security hardening procedures are mandatory:
+---
 
-1. Modify all default passwords in `.env` configuration file
-2. Enable SSL/TLS certificate-based encryption for all service endpoints
-3. Implement network-level access controls via firewall configuration
-4. Follow comprehensive security hardening procedures documented in `/docs/security-hardening.md`
-5. Establish regular security update and patch management procedures
-
-### Development and Testing Environments
-
-For isolated testing, laboratory research, or educational purposes, default security configuration is acceptable provided the platform is not exposed to untrusted networks.
+You are ready to deploy. Commit, push, watch the pipelines, and dive into `AI_GUIDE_KAIZEN.md` for deeper architectural insight.

@@ -1,506 +1,307 @@
 #!/usr/bin/env python3
-"""
-AI-SOC Graphical Launcher
-==========================
-Simplified graphical interface for the AI Security Operations Center platform
+"""AI-SOC Deployment Assistant
 
-Usage:
-    Execute this file via double-click to launch the AI-SOC control interface
-    OR
-    python AI-SOC-Launcher.py
+This desktop helper focuses on the CI/CD + CloudFormation deployment flow.
+It replaces the old Docker launcher and helps operators:
+  * validate local prerequisites (git, aws cli, cfn-lint)
+  * lint CloudFormation templates before committing
+  * jump into the Getting Started / CI/CD guides quickly
+  * open the GitHub Actions dashboard for manual runs
 """
 
-import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox
+from __future__ import annotations
+
+import os
+import platform
+import shutil
 import subprocess
 import threading
-import os
-import sys
-import time
-import webbrowser
+import tkinter as tk
+from dataclasses import dataclass
 from pathlib import Path
+from tkinter import messagebox, scrolledtext, ttk
+import webbrowser
 
-class AISOCLauncher:
-    def __init__(self, root):
+
+@dataclass
+class PrereqCheck:
+    name: str
+    commands: list[list[str]]
+    required: bool = True
+
+
+class AISOCDeploymentAssistant:
+    def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("AI-SOC Control Center")
-        self.root.geometry("900x700")
-        self.root.resizable(True, True)
+        self.root.title("AI-SOC Deployment Assistant")
+        self.root.geometry("980x720")
+        self.root.minsize(860, 620)
 
-        # Get script directory
-        self.base_dir = Path(__file__).parent.absolute()
+        self.base_dir = Path(__file__).parent.resolve()
         os.chdir(self.base_dir)
 
-        # State tracking
-        self.is_running = False
-        self.services_status = {}
+        self.repo_actions_url = self._detect_actions_url()
 
-        # Setup UI
-        self.setup_ui()
+        self.prereq_checks: list[PrereqCheck] = [
+            PrereqCheck("Git CLI", [["git", "--version"]]),
+            PrereqCheck("AWS CLI v2", [["aws", "--version"]]),
+            PrereqCheck("Python 3.11+", [["python3", "--version"], ["python", "--version"]]),
+            PrereqCheck("cfn-lint", [["cfn-lint", "--version"]], required=False),
+            PrereqCheck("cfn-guard", [["cfn-guard", "--version"]], required=False),
+        ]
 
-        # Check prerequisites
-        self.root.after(500, self.check_prerequisites)
+        self._setup_ui()
+        self.root.after(400, self.validate_prereqs)
 
-    def setup_ui(self):
-        """Create the user interface"""
-        # Header
-        header_frame = tk.Frame(self.root, bg="#2c3e50", height=100)
-        header_frame.pack(fill=tk.X, padx=0, pady=0)
-        header_frame.pack_propagate(False)
+    # ------------------------------------------------------------------
+    # UI
+    # ------------------------------------------------------------------
+    def _setup_ui(self) -> None:
+        header = tk.Frame(self.root, bg="#1b2733", height=90)
+        header.pack(fill=tk.X)
+        header.pack_propagate(False)
 
-        title = tk.Label(
-            header_frame,
-            text="🛡️ AI Security Operations Center",
-            font=("Arial", 24, "bold"),
-            bg="#2c3e50",
-            fg="white"
-        )
-        title.pack(pady=25)
+        tk.Label(
+            header,
+            text="AI-SOC CI/CD Deployment Assistant",
+            font=("Segoe UI", 22, "bold"),
+            fg="white",
+            bg="#1b2733"
+        ).pack(pady=20)
 
-        # Main content area
-        content_frame = tk.Frame(self.root, bg="#ecf0f1")
-        content_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        content = tk.Frame(self.root, bg="#f5f6f7")
+        content.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
 
-        # Status Panel
-        status_panel = tk.LabelFrame(
-            content_frame,
-            text="System Status",
-            font=("Arial", 12, "bold"),
-            bg="#ecf0f1",
+        status_card = tk.LabelFrame(
+            content,
+            text="Prerequisite Status",
+            font=("Segoe UI", 11, "bold"),
+            bg="#f5f6f7",
             padx=10,
             pady=10
         )
-        status_panel.pack(fill=tk.X, padx=5, pady=5)
+        status_card.pack(fill=tk.X)
 
-        self.status_label = tk.Label(
-            status_panel,
-            text="⚪ System Not Started",
-            font=("Arial", 14),
-            bg="#ecf0f1",
-            fg="#7f8c8d"
+        columns = ("check", "status", "details")
+        self.status_tree = ttk.Treeview(
+            status_card,
+            columns=columns,
+            show="headings",
+            height=5
         )
-        self.status_label.pack(pady=5)
+        self.status_tree.heading("check", text="Check")
+        self.status_tree.heading("status", text="Status")
+        self.status_tree.heading("details", text="Details")
+        self.status_tree.column("check", width=200)
+        self.status_tree.column("status", width=120, anchor=tk.CENTER)
+        self.status_tree.column("details", width=420)
+        self.status_tree.pack(fill=tk.X)
 
-        self.progress = ttk.Progressbar(
-            status_panel,
-            mode='indeterminate',
-            length=400
-        )
-        self.progress.pack(pady=10)
+        for check in self.prereq_checks:
+            self.status_tree.insert("", tk.END, iid=check.name, values=(check.name, "Pending", ""))
 
-        # Control Buttons
-        button_frame = tk.Frame(content_frame, bg="#ecf0f1")
-        button_frame.pack(fill=tk.X, padx=5, pady=10)
-
-        self.start_button = tk.Button(
-            button_frame,
-            text="▶ START AI-SOC",
-            command=self.start_system,
-            bg="#27ae60",
-            fg="white",
-            font=("Arial", 14, "bold"),
-            padx=30,
-            pady=15,
-            relief=tk.RAISED,
-            cursor="hand2"
-        )
-        self.start_button.pack(side=tk.LEFT, padx=10)
-
-        self.stop_button = tk.Button(
-            button_frame,
-            text="⏹ STOP AI-SOC",
-            command=self.stop_system,
-            bg="#e74c3c",
-            fg="white",
-            font=("Arial", 14, "bold"),
-            padx=30,
-            pady=15,
-            relief=tk.RAISED,
-            state=tk.DISABLED,
-            cursor="hand2"
-        )
-        self.stop_button.pack(side=tk.LEFT, padx=10)
-
-        self.dashboard_button = tk.Button(
-            button_frame,
-            text="🌐 Open Dashboard",
-            command=self.open_dashboard,
-            bg="#3498db",
-            fg="white",
-            font=("Arial", 14, "bold"),
-            padx=30,
-            pady=15,
-            relief=tk.RAISED,
-            state=tk.DISABLED,
-            cursor="hand2"
-        )
-        self.dashboard_button.pack(side=tk.LEFT, padx=10)
-
-        # Services Status
-        services_frame = tk.LabelFrame(
-            content_frame,
-            text="Services Status",
-            font=("Arial", 11, "bold"),
-            bg="#ecf0f1",
+        buttons_card = tk.LabelFrame(
+            content,
+            text="Deployment Shortcuts",
+            font=("Segoe UI", 11, "bold"),
+            bg="#f5f6f7",
             padx=10,
             pady=10
         )
-        services_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        buttons_card.pack(fill=tk.X, pady=10)
 
-        self.services_text = scrolledtext.ScrolledText(
-            services_frame,
-            height=8,
-            font=("Consolas", 10),
-            bg="white",
-            fg="#2c3e50",
-            relief=tk.SUNKEN,
-            borderwidth=2
+        button_specs = [
+            ("🔄 Validate Prerequisites", self.validate_prereqs),
+            ("🧪 Run Template Validation", self.run_template_validation),
+            ("📘 Open Getting Started", lambda: self.open_doc("GETTING-STARTED.md")),
+            ("⚙️ Open CI/CD Guide", lambda: self.open_doc("CICD_GUIDE.md")),
+            ("🚀 Open GitHub Actions", self.open_actions_dashboard),
+            ("☁️ Open AWS CloudFormation", self.open_cloudformation_console),
+        ]
+
+        for idx, (label, command) in enumerate(button_specs):
+            btn = tk.Button(
+                buttons_card,
+                text=label,
+                command=command,
+                font=("Segoe UI", 11, "bold"),
+                bg="#0b5fff",
+                fg="white",
+                padx=14,
+                pady=10,
+                relief=tk.GROOVE,
+                cursor="hand2"
+            )
+            btn.grid(row=idx // 2, column=idx % 2, sticky="ew", padx=6, pady=6)
+
+        buttons_card.grid_columnconfigure(0, weight=1)
+        buttons_card.grid_columnconfigure(1, weight=1)
+
+        next_steps = tk.LabelFrame(
+            content,
+            text="CI/CD Flow (copy/paste checklist)",
+            font=("Segoe UI", 11, "bold"),
+            bg="#f5f6f7",
+            padx=10,
+            pady=10
         )
-        self.services_text.pack(fill=tk.BOTH, expand=True)
-        self.services_text.insert(tk.END, "Click START to launch AI-SOC services...\n")
-        self.services_text.config(state=tk.DISABLED)
+        next_steps.pack(fill=tk.X, pady=10)
 
-        # Log Output
+        steps_text = (
+            "1. Update CloudFormation templates or Lambda code.\n"
+            "2. Run template validation (cfn-lint / cfn-guard).\n"
+            "3. Commit + push to main/develop, or dispatch the workflow manually.\n"
+            "4. Monitor GitHub Actions → deploy-infra / deploy-lambdas / run-tests.\n"
+            "5. Confirm stacks reached CREATE_COMPLETE in eu-central-1 CloudFormation.\n"
+            "6. Execute Step Functions test run to validate the end-to-end pipeline."
+        )
+        tk.Label(
+            next_steps,
+            text=steps_text,
+            font=("Consolas", 11),
+            justify=tk.LEFT,
+            bg="#f5f6f7"
+        ).pack(anchor=tk.W)
+
         log_frame = tk.LabelFrame(
-            content_frame,
-            text="System Log",
-            font=("Arial", 11, "bold"),
-            bg="#ecf0f1",
+            content,
+            text="Activity Log",
+            font=("Segoe UI", 11, "bold"),
+            bg="#f5f6f7",
             padx=10,
             pady=10
         )
-        log_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        log_frame.pack(fill=tk.BOTH, expand=True)
 
         self.log_text = scrolledtext.ScrolledText(
             log_frame,
-            height=10,
-            font=("Consolas", 9),
-            bg="#1e1e1e",
-            fg="#00ff00",
-            relief=tk.SUNKEN,
-            borderwidth=2
+            height=12,
+            font=("Consolas", 10),
+            bg="#111",
+            fg="#7CFC00"
         )
         self.log_text.pack(fill=tk.BOTH, expand=True)
-        self.log_text.insert(tk.END, "AI-SOC Launcher initialized.\n")
-        self.log_text.config(state=tk.DISABLED)
+        self.log("Deployment assistant ready. This tool no longer starts Docker; it helps you run the CI/CD pipeline.")
 
-        # Footer
-        footer = tk.Label(
-            self.root,
-            text="AI-SOC v1.0 | AI-Augmented Security Operations Center",
-            bg="#34495e",
-            fg="white",
-            font=("Arial", 9),
-            pady=5
-        )
-        footer.pack(fill=tk.X, side=tk.BOTTOM)
-
-    def log(self, message, color=None):
-        """Add message to log"""
-        self.log_text.config(state=tk.NORMAL)
-        timestamp = time.strftime("%H:%M:%S")
-        self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
+    # ------------------------------------------------------------------
+    # Logging helpers
+    # ------------------------------------------------------------------
+    def log(self, message: str) -> None:
+        self.log_text.insert(tk.END, f"{message}\n")
         self.log_text.see(tk.END)
-        self.log_text.config(state=tk.DISABLED)
 
-    def update_services(self, message):
-        """Update services status display"""
-        self.services_text.config(state=tk.NORMAL)
-        self.services_text.insert(tk.END, f"{message}\n")
-        self.services_text.see(tk.END)
-        self.services_text.config(state=tk.DISABLED)
+    def _update_status(self, name: str, status: str, details: str) -> None:
+        self.status_tree.item(name, values=(name, status, details))
 
-    def check_prerequisites(self):
-        """Check if Docker is installed and running"""
-        self.log("Checking system requirements...")
-
-        # Check Docker
-        try:
-            result = subprocess.run(
-                ["docker", "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                self.log("✓ Docker is installed")
-                self.check_docker_running()
-            else:
-                self.show_docker_not_installed()
-        except FileNotFoundError:
-            self.show_docker_not_installed()
-        except Exception as e:
-            self.log(f"✗ Error checking Docker: {e}")
-
-    def check_docker_running(self):
-        """Check if Docker daemon is running"""
-        try:
-            result = subprocess.run(
-                ["docker", "ps"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                self.log("✓ Docker is running")
-                self.log("✓ System is ready to start")
-                self.status_label.config(
-                    text="✅ Ready to Start",
-                    fg="#27ae60"
-                )
-            else:
-                self.log("✗ Docker is not running")
-                self.log("Please start Docker Desktop and try again")
-                self.status_label.config(
-                    text="⚠️ Docker Not Running",
-                    fg="#e67e22"
-                )
-        except Exception as e:
-            self.log(f"✗ Cannot connect to Docker: {e}")
-
-    def show_docker_not_installed(self):
-        """Show message about Docker installation"""
-        self.log("✗ Docker is not installed")
-        self.status_label.config(
-            text="❌ Docker Not Found",
-            fg="#e74c3c"
-        )
-
-        response = messagebox.askyesno(
-            "Docker Required",
-            "AI-SOC requires Docker Desktop for container orchestration.\n\n"
-            "Would you like to download Docker Desktop now?\n\n"
-            "Docker Desktop is freely available and requires approximately 5-10 minutes for installation."
-        )
-
-        if response:
-            webbrowser.open("https://www.docker.com/products/docker-desktop/")
-
-    def start_system(self):
-        """Start all AI-SOC services"""
-        self.is_running = True
-        self.start_button.config(state=tk.DISABLED)
-        self.stop_button.config(state=tk.NORMAL)
-        self.progress.start()
-
-        self.log("Starting AI-SOC services...")
-        self.status_label.config(
-            text="🔄 Starting Services...",
-            fg="#3498db"
-        )
-
-        # Run in background thread
-        thread = threading.Thread(target=self._start_services_thread)
-        thread.daemon = True
+    # ------------------------------------------------------------------
+    # Actions
+    # ------------------------------------------------------------------
+    def validate_prereqs(self) -> None:
+        thread = threading.Thread(target=self._validate_prereqs_thread, daemon=True)
         thread.start()
 
-    def _start_services_thread(self):
-        """Background thread to start services"""
-        try:
-            # Check/copy .env
-            self.log("Configuring environment...")
-            env_file = self.base_dir / ".env"
-            if not env_file.exists():
-                self.log("✗ .env file not found")
-                self.root.after(0, lambda: self.show_env_error())
-                return
-
-            # Copy .env to docker-compose directory
-            docker_compose_dir = self.base_dir / "docker-compose"
-            docker_compose_env = docker_compose_dir / ".env"
-
-            import shutil
-            shutil.copy(env_file, docker_compose_env)
-            self.log("✓ Environment configured")
-
-            # Start SIEM stack
-            self.log("Starting Wazuh SIEM...")
-            self.root.after(0, lambda: self.update_services("Starting Wazuh Indexer..."))
-
-            result = subprocess.run(
-                ["docker", "compose", "-f", "docker-compose/phase1-siem-core-windows.yml", "up", "-d"],
-                capture_output=True,
-                text=True,
-                cwd=str(self.base_dir)
-            )
-
-            if result.returncode == 0:
-                self.log("✓ Wazuh SIEM started")
-                self.root.after(0, lambda: self.update_services("✓ Wazuh Indexer"))
-                self.root.after(0, lambda: self.update_services("✓ Wazuh Manager"))
-                time.sleep(2)
+    def _validate_prereqs_thread(self) -> None:
+        self.log("Running prerequisite checks...")
+        for check in self.prereq_checks:
+            result, details = self._run_first_available(check.commands)
+            if result:
+                self._update_status(check.name, "✅", details)
             else:
-                self.log(f"✗ Error starting SIEM: {result.stderr}")
+                status = "⚠️" if not check.required else "❌"
+                detail_msg = details or ("Not found" if check.required else "Optional tool not installed")
+                self._update_status(check.name, status, detail_msg)
+                if check.required:
+                    self.log(f"{check.name} missing. Install it before deploying.")
+
+    def run_template_validation(self) -> None:
+        thread = threading.Thread(target=self._run_template_validation_thread, daemon=True)
+        thread.start()
+
+    def _run_template_validation_thread(self) -> None:
+        script_path = self.base_dir / "scripts" / "validate-cfn.sh"
+        if script_path.exists():
+            cmd = ["bash", str(script_path)]
+            self.log("Executing scripts/validate-cfn.sh ...")
+        else:
+            templates = sorted(Path(self.base_dir / "cloudformation").glob("*.yaml"))
+            if not shutil.which("cfn-lint"):
+                self.log("cfn-lint not found. Install it or add scripts/validate-cfn.sh for custom validation.")
                 return
+            cmd = ["cfn-lint", *[str(t) for t in templates]]
+            self.log("Running cfn-lint across cloudformation/*.yaml ...")
 
-            # Start AI services
-            self.log("Starting AI services...")
-            self.root.after(0, lambda: self.update_services("Starting ML Inference..."))
-
-            result = subprocess.run(
-                ["docker", "compose", "-f", "docker-compose/ai-services.yml", "up", "-d"],
-                capture_output=True,
-                text=True,
-                cwd=str(self.base_dir)
-            )
-
-            if result.returncode == 0:
-                self.log("✓ AI services started")
-                self.root.after(0, lambda: self.update_services("✓ ML Inference"))
-                self.root.after(0, lambda: self.update_services("✓ Alert Triage"))
-                self.root.after(0, lambda: self.update_services("✓ RAG Service"))
-                self.root.after(0, lambda: self.update_services("✓ ChromaDB"))
-            else:
-                self.log(f"✗ Error starting AI services: {result.stderr}")
-
-            # Wait for services to initialize
-            self.log("Waiting for services to initialize...")
-            time.sleep(10)
-
-            # Check health
-            self.root.after(0, self.check_services_health)
-
-        except Exception as e:
-            self.log(f"✗ Error: {e}")
-            self.root.after(0, self.on_start_error)
-
-    def check_services_health(self):
-        """Check if services are healthy"""
         try:
-            result = subprocess.run(
-                ["docker", "ps", "--format", "{{.Names}}\t{{.Status}}"],
-                capture_output=True,
-                text=True
-            )
-
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=self.base_dir)
             if result.returncode == 0:
-                healthy_count = 0
-                total_count = 0
+                self.log("Template validation passed.")
+            else:
+                self.log("Template validation reported issues:")
+                self.log(result.stdout or result.stderr)
+        except FileNotFoundError as exc:
+            self.log(f"Failed to run validation command: {exc}")
 
-                for line in result.stdout.strip().split('\n'):
-                    if line:
-                        total_count += 1
-                        if 'healthy' in line.lower() or 'up' in line.lower():
-                            healthy_count += 1
-
-                self.log(f"Services health: {healthy_count}/{total_count} operational")
-
-                if healthy_count > 0:
-                    self.on_start_success()
-                else:
-                    self.log("⚠️ Services started but health check pending...")
-                    self.root.after(5000, self.check_services_health)
-
-        except Exception as e:
-            self.log(f"Error checking health: {e}")
-            self.on_start_error()
-
-    def on_start_success(self):
-        """Called when services start successfully"""
-        self.progress.stop()
-        self.status_label.config(
-            text="✅ AI-SOC Running",
-            fg="#27ae60"
-        )
-        self.dashboard_button.config(state=tk.NORMAL)
-        self.log("✓ AI-SOC is ready!")
-        self.log("Click 'Open Dashboard' to view the web interface")
-
-        messagebox.showinfo(
-            "Deployment Successful",
-            "AI-SOC platform is now operational.\n\n"
-            "Select 'Open Dashboard' to access the web-based monitoring interface."
-        )
-
-    def on_start_error(self):
-        """Called when start fails"""
-        self.progress.stop()
-        self.status_label.config(
-            text="❌ Start Failed",
-            fg="#e74c3c"
-        )
-        self.start_button.config(state=tk.NORMAL)
-        self.stop_button.config(state=tk.DISABLED)
-
-    def show_env_error(self):
-        """Show error about missing .env file"""
-        messagebox.showerror(
-            "Configuration Missing",
-            ".env configuration file not found.\n\n"
-            "Please ensure the .env file exists in the AI-SOC directory."
-        )
-        self.on_start_error()
-
-    def stop_system(self):
-        """Stop all AI-SOC services"""
-        if not messagebox.askyesno(
-            "Confirm Stop",
-            "Are you sure you want to stop AI-SOC?"
-        ):
+    def open_doc(self, relative_path: str) -> None:
+        target = (self.base_dir / relative_path).resolve()
+        if not target.exists():
+            messagebox.showerror("File not found", f"Cannot locate {relative_path}.")
             return
+        webbrowser.open(target.as_uri())
 
-        self.log("Stopping AI-SOC services...")
-        self.status_label.config(
-            text="🔄 Stopping...",
-            fg="#e67e22"
-        )
-        self.progress.start()
+    def open_actions_dashboard(self) -> None:
+        webbrowser.open(self.repo_actions_url)
 
-        thread = threading.Thread(target=self._stop_services_thread)
-        thread.daemon = True
-        thread.start()
+    def open_cloudformation_console(self) -> None:
+        url = "https://eu-central-1.console.aws.amazon.com/cloudformation/home?region=eu-central-1#/stacks"
+        webbrowser.open(url)
 
-    def _stop_services_thread(self):
-        """Background thread to stop services"""
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def _run_first_available(self, commands: list[list[str]]) -> tuple[bool, str]:
+        for cmd in commands:
+            binary = shutil.which(cmd[0])
+            if binary is None:
+                continue
+            full_cmd = [binary, *cmd[1:]]
+            try:
+                result = subprocess.run(full_cmd, capture_output=True, text=True)
+                if result.returncode == 0:
+                    output = result.stdout.strip() or result.stderr.strip()
+                    return True, output.splitlines()[0] if output else "OK"
+            except Exception as exc:  # pragma: no cover (edge case logging)
+                return False, f"error: {exc}"
+        return False, "binary not in PATH"
+
+    def _detect_actions_url(self) -> str:
         try:
-            # Stop AI services
-            subprocess.run(
-                ["docker", "compose", "-f", "docker-compose/ai-services.yml", "down"],
+            result = subprocess.run(
+                ["git", "config", "--get", "remote.origin.url"],
                 capture_output=True,
-                cwd=str(self.base_dir)
+                text=True,
+                cwd=self.base_dir
             )
-            self.log("✓ AI services stopped")
+            remote = result.stdout.strip()
+            if remote:
+                if remote.startswith("git@"):
+                    remote = remote.replace(":", "/").replace("git@", "https://")
+                if remote.endswith(".git"):
+                    remote = remote[:-4]
+                return f"{remote}/actions"
+        except Exception:
+            pass
+        return "https://github.com/zhadyz/AI_SOC/actions"
 
-            # Stop SIEM
-            subprocess.run(
-                ["docker", "compose", "-f", "docker-compose/phase1-siem-core-windows.yml", "down"],
-                capture_output=True,
-                cwd=str(self.base_dir)
-            )
-            self.log("✓ SIEM stopped")
 
-            self.root.after(0, self.on_stop_success)
-
-        except Exception as e:
-            self.log(f"✗ Error stopping: {e}")
-
-    def on_stop_success(self):
-        """Called when services stop successfully"""
-        self.progress.stop()
-        self.is_running = False
-        self.start_button.config(state=tk.NORMAL)
-        self.stop_button.config(state=tk.DISABLED)
-        self.dashboard_button.config(state=tk.DISABLED)
-        self.status_label.config(
-            text="⚪ System Stopped",
-            fg="#7f8c8d"
-        )
-        self.services_text.config(state=tk.NORMAL)
-        self.services_text.delete(1.0, tk.END)
-        self.services_text.insert(tk.END, "All services stopped.\n")
-        self.services_text.config(state=tk.DISABLED)
-        self.log("✓ AI-SOC stopped successfully")
-
-    def open_dashboard(self):
-        """Open the web dashboard"""
-        self.log("Opening dashboard in browser...")
-        webbrowser.open("http://localhost:3000")
-
-def main():
-    """Main entry point"""
+def main() -> None:
     root = tk.Tk()
-    app = AISOCLauncher(root)
+    app = AISOCDeploymentAssistant(root)
+    if platform.system() == "Windows":
+        try:
+            root.iconbitmap(default="")
+        except tk.TclError:
+            pass
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()
