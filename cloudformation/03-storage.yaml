@@ -82,12 +82,17 @@ Resources:
               {
                 "ResourceType": "collection",
                 "Resource": ["collection/${ProjectName}-${Environment}-alerts"],
-                "Permission": ["aoss:*"],
-                "Principal": [
-                  "arn:aws:iam::${AWS::AccountId}:root",
-                  "arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-event-normalizer-role"
+                "Permission": [
+                  "aoss:CreateCollectionItems",
+                  "aoss:UpdateCollectionItems",
+                  "aoss:DescribeCollectionItems",
+                  "aoss:DeleteCollectionItems"
                 ]
               }
+            ],
+            "Principal": [
+              "arn:aws:iam::${AWS::AccountId}:root",
+              "arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-event-normalizer-role"
             ],
             "Description": "Allow root and event normalizer to access OpenSearch"
           }
