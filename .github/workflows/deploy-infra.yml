@@ -1,0 +1,174 @@
+name: Deploy Infrastructure
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'cloudformation/**'
+      - '.github/workflows/deploy-infra.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'cloudformation/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: eu-central-1
+  PROJECT_NAME: ai-soc
+
+jobs:
+  validate:
+    name: Validate CloudFormation Templates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate CloudFormation templates
+        run: |
+          for template in cloudformation/*.yaml; do
+            echo "Validating $template"
+            aws cloudformation validate-template \
+              --template-body file://$template
+          done
+
+      - name: CloudFormation Linter
+        uses: scottbrenner/cfn-lint-action@v2
+        with:
+          args: "cloudformation/*.yaml"
+
+  deploy-foundation:
+    name: Deploy Foundation Stack
+    needs: validate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      artifacts-bucket: ${{ steps.foundation_outputs.outputs.artifacts-bucket }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Determine environment
+        id: env
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "environment=prod" >> $GITHUB_OUTPUT
+          else
+            echo "environment=dev" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy Foundation Stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/01-foundation.yaml \
+            --stack-name ${{ env.PROJECT_NAME }}-foundation-${{ steps.env.outputs.environment }} \
+            --parameter-overrides \
+                ProjectName=${{ env.PROJECT_NAME }} \
+                Environment=${{ steps.env.outputs.environment }} \
+                AlertEmail=${{ secrets.ALERT_EMAIL }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+      - name: Get Stack Outputs
+        id: foundation_outputs
+        run: |
+          ARTIFACTS_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.PROJECT_NAME }}-foundation-${{ steps.env.outputs.environment }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`ArtifactsBucketName`].OutputValue' \
+            --output text)
+          echo "artifacts-bucket=$ARTIFACTS_BUCKET" >> $GITHUB_OUTPUT
+
+  deploy-event-ingestion:
+    name: Deploy Event Ingestion Stack
+    needs: deploy-foundation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy Event Ingestion Stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/02-event-ingestion.yaml \
+            --stack-name ${{ env.PROJECT_NAME }}-ingestion-${{ needs.deploy-foundation.outputs.environment }} \
+            --parameter-overrides \
+                ProjectName=${{ env.PROJECT_NAME }} \
+                Environment=${{ needs.deploy-foundation.outputs.environment }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+  deploy-storage:
+    name: Deploy Storage Stack
+    needs: deploy-foundation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy Storage Stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/03-storage.yaml \
+            --stack-name ${{ env.PROJECT_NAME }}-storage-${{ needs.deploy-foundation.outputs.environment }} \
+            --parameter-overrides \
+                ProjectName=${{ env.PROJECT_NAME }} \
+                Environment=${{ needs.deploy-foundation.outputs.environment }} \
+            --no-fail-on-empty-changeset
+
+  notify:
+    name: Notify Deployment Status
+    needs: [deploy-foundation, deploy-event-ingestion, deploy-storage]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Deployment Summary
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Environment: ${{ needs.deploy-foundation.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Region: ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Status: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY

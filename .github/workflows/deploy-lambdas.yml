@@ -1,0 +1,134 @@
+name: Deploy Lambda Functions
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'lambda/**'
+      - '.github/workflows/deploy-lambdas.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: eu-central-1
+  PROJECT_NAME: ai-soc
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  build-and-deploy:
+    name: Build and Deploy Lambda
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        function:
+          - event-normalizer
+          - alert-triage
+          - ml-inference
+          - remediation
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Determine environment
+        id: deploy-env
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "environment=prod" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            echo "environment=staging" >> $GITHUB_OUTPUT
+          else
+            echo "environment=dev" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install dependencies
+        working-directory: lambda/${{ matrix.function }}
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt -t .
+          fi
+
+      - name: Create deployment package
+        working-directory: lambda/${{ matrix.function }}
+        run: |
+          zip -r ../${{ matrix.function }}.zip . -x "*.pyc" "__pycache__/*"
+
+      - name: Upload to S3
+        run: |
+          STACK_ENV=${{ steps.deploy-env.outputs.environment }}
+          ARTIFACTS_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.PROJECT_NAME }}-foundation-${STACK_ENV} \
+            --query 'Stacks[0].Outputs[?OutputKey==`ArtifactsBucketName`].OutputValue' \
+            --output text)
+
+          aws s3 cp lambda/${{ matrix.function }}.zip \
+            s3://${ARTIFACTS_BUCKET}/lambda/${{ matrix.function }}.zip
+
+      - name: Update Lambda function
+        run: |
+          STACK_ENV=${{ steps.deploy-env.outputs.environment }}
+          FUNCTION_NAME=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.PROJECT_NAME }}-ingestion-${STACK_ENV} \
+            --query 'Stacks[0].Outputs[?OutputKey==`${{ matrix.function }}FunctionName`].OutputValue' \
+            --output text 2>/dev/null || echo "${{ env.PROJECT_NAME }}-${STACK_ENV}-${{ matrix.function }}")
+
+          if aws lambda get-function --function-name ${FUNCTION_NAME} 2>/dev/null; then
+            ARTIFACTS_BUCKET=$(aws cloudformation describe-stacks \
+              --stack-name ${{ env.PROJECT_NAME }}-foundation-${STACK_ENV} \
+              --query 'Stacks[0].Outputs[?OutputKey==`ArtifactsBucketName`].OutputValue' \
+              --output text)
+
+            aws lambda update-function-code \
+              --function-name ${FUNCTION_NAME} \
+              --s3-bucket ${ARTIFACTS_BUCKET} \
+              --s3-key lambda/${{ matrix.function }}.zip
+
+            echo "✅ Updated Lambda function: ${FUNCTION_NAME}"
+          else
+            echo "⚠️  Function ${FUNCTION_NAME} not found - will be created by CloudFormation"
+          fi
+
+      - name: Wait for function update
+        run: |
+          STACK_ENV=${{ steps.deploy-env.outputs.environment }}
+          FUNCTION_NAME=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.PROJECT_NAME }}-ingestion-${STACK_ENV} \
+            --query 'Stacks[0].Outputs[?OutputKey==`${{ matrix.function }}FunctionName`].OutputValue' \
+            --output text 2>/dev/null || echo "${{ env.PROJECT_NAME }}-${STACK_ENV}-${{ matrix.function }}")
+
+          if aws lambda get-function --function-name ${FUNCTION_NAME} 2>/dev/null; then
+            aws lambda wait function-updated \
+              --function-name ${FUNCTION_NAME}
+            echo "✅ Function update complete"
+          fi
+
+# NOTE: PROJECT_NAME must match the stack prefix you use in CloudFormation (default ai-soc).
