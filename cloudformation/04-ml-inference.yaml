@@ -1,0 +1,157 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: ML Inference Stack - Lambda-based threat detection
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Project name prefix
+  
+  Environment:
+    Type: String
+    Description: Environment (dev/staging/prod)
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+Resources:
+  # IAM Role for ML Inference Lambda
+  MlInferenceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-ml-inference-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: KinesisAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kinesis:GetRecords
+                  - kinesis:GetShardIterator
+                  - kinesis:DescribeStream
+                  - kinesis:ListStreams
+                  - kinesis:ListShards
+                Resource:
+                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-KinesisStreamArn'
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:GetItem
+                Resource:
+                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-StateTableArn'
+
+  # ML Inference Lambda Function
+  MlInferenceLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-ml-inference'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt MlInferenceRole.Arn
+      Timeout: 60
+      MemorySize: 1024
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          PROJECT_NAME: !Ref ProjectName
+          STATE_TABLE_NAME:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-StateTableName'
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import logging
+          from datetime import datetime
+          
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          
+          def handler(event, context):
+              """ML Inference - Placeholder until model is trained"""
+              logger.info(f"Processing {len(event.get('Records', []))} records")
+              
+              for record in event.get('Records', []):
+                  # Kinesis data is base64 encoded
+                  import base64
+                  payload = json.loads(base64.b64decode(record['kinesis']['data']))
+                  
+                  logger.info(f"Processing event: {payload.get('event_id')}")
+                  
+                  # Placeholder ML inference - returns mock threat score
+                  severity = payload.get('severity', 'LOW')
+                  threat_score = {
+                      'CRITICAL': 95,
+                      'HIGH': 75,
+                      'MEDIUM': 50,
+                      'LOW': 25
+                  }.get(severity, 50)
+                  
+                  result = {
+                      'event_id': payload.get('event_id'),
+                      'timestamp': datetime.utcnow().isoformat(),
+                      'threat_score': threat_score,
+                      'ml_confidence': 0.85,
+                      'classification': 'malicious' if threat_score > 70 else 'benign',
+                      'model_version': 'placeholder-v1',
+                      'features_analyzed': ['severity', 'source', 'event_type']
+                  }
+                  
+                  logger.info(f"ML Result: threat_score={threat_score}, classification={result['classification']}")
+              
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps({'message': 'Processing complete'})
+              }
+
+  # Event Source Mapping - Connect Kinesis to Lambda
+  MlInferenceEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-KinesisStreamArn'
+      FunctionName: !Ref MlInferenceLambda
+      StartingPosition: LATEST
+      BatchSize: 10
+      MaximumBatchingWindowInSeconds: 5
+      Enabled: true
+
+  # CloudWatch Log Group
+  MlInferenceLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${MlInferenceLambda}'
+      RetentionInDays: 14
+
+Outputs:
+  MlInferenceFunctionName:
+    Description: Name of the ML inference Lambda function
+    Value: !Ref MlInferenceLambda
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-MlInferenceName'
+  
+  MlInferenceFunctionArn:
+    Description: ARN of the ML inference Lambda function
+    Value: !GetAtt MlInferenceLambda.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-MlInferenceArn'
+  
+  MlInferenceRoleArn:
+    Description: ARN of the ML inference IAM role
+    Value: !GetAtt MlInferenceRole.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-MlInferenceRoleArn'
