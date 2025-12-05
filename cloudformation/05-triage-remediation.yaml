@@ -1,0 +1,325 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Alert Triage and Remediation Stack
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Project name prefix
+  
+  Environment:
+    Type: String
+    Description: Environment (dev/staging/prod)
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+Resources:
+  # ============================================================================
+  # Alert Triage Lambda
+  # ============================================================================
+  
+  AlertTriageRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-alert-triage-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:GetItem
+                Resource:
+                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-StateTableArn'
+
+  AlertTriageLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-alert-triage'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt AlertTriageRole.Arn
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          PROJECT_NAME: !Ref ProjectName
+          STATE_TABLE_NAME:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-StateTableName'
+      Code:
+        ZipFile: |
+          import json
+          import logging
+          from datetime import datetime
+          
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          
+          def handler(event, context):
+              """Assign a priority score to an alert before orchestration."""
+              logger.info("Received event for triage: %s", json.dumps(event))
+              
+              try:
+                  threat_score = event.get("ml_prediction", {}).get("threat_score", 0)
+                  severity = event.get("severity", "LOW")
+                  source = event.get("source", "unknown")
+                  event_type = event.get("event_type", "unknown")
+                  
+                  priority_score = calculate_priority(threat_score, severity, source, event_type)
+                  triage_info = {
+                      "priority_score": priority_score,
+                      "priority_level": get_priority_level(priority_score),
+                      "requires_human_review": priority_score > 80,
+                      "auto_remediate": priority_score > 90,
+                      "recommended_actions": get_recommended_actions(priority_score, event_type),
+                      "triage_timestamp": datetime.utcnow().isoformat(),
+                  }
+                  
+                  event["triage"] = triage_info
+                  logger.info("Triage complete: priority=%s level=%s", priority_score, triage_info["priority_level"])
+                  return event
+                  
+              except Exception as exc:
+                  logger.error("Error in triage: %s", exc, exc_info=True)
+                  event["triage"] = {"error": str(exc), "priority_score": 50, "priority_level": "MEDIUM"}
+                  return event
+          
+          def calculate_priority(threat_score, severity, source, event_type):
+              """Blend ML output, severity, and context into a 0-100 priority."""
+              severity_weights = {"CRITICAL": 40, "HIGH": 30, "MEDIUM": 20, "LOW": 10}
+              source_weights = {"aws.guardduty": 1.2, "aws.securityhub": 1.1, "aws.cloudtrail": 1.0}
+              critical_events = ["GuardDuty Finding", "UnauthorizedAccess", "Recon", "Trojan"]
+              
+              base_score = (threat_score * 0.6) + severity_weights.get(severity, 10)
+              adjusted_score = base_score * source_weights.get(source, 1.0)
+              
+              if any(keyword in event_type for keyword in critical_events):
+                  adjusted_score *= 1.15
+              
+              return min(100, max(0, adjusted_score))
+          
+          def get_priority_level(score):
+              """Convert numeric score to priority level"""
+              if score >= 90:
+                  return 'CRITICAL'
+              elif score >= 70:
+                  return 'HIGH'
+              elif score >= 40:
+                  return 'MEDIUM'
+              else:
+                  return 'LOW'
+          
+          def get_recommended_actions(score, event_type):
+              """Suggest actions based on priority"""
+              if score >= 90:
+                  return ["isolate_resource", "disable_credentials", "notify_security_team"]
+              elif score >= 70:
+                  return ["review_logs", "restrict_access", "notify_security_team"]
+              elif score >= 40:
+                  return ["monitor_activity", "review_later"]
+              else:
+                  return ["log_for_analysis"]
+
+  AlertTriageLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AlertTriageLambda}'
+      RetentionInDays: 14
+
+  # ============================================================================
+  # Remediation Lambda
+  # ============================================================================
+  
+  RemediationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-remediation-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: RemediationActions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:UpdateAccessKey
+                  - iam:ListAccessKeys
+                  - iam:DeactivateMFADevice
+                  - iam:GetUser
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ec2:RevokeSecurityGroupIngress
+                  - ec2:RevokeSecurityGroupEgress
+                  - ec2:DescribeSecurityGroups
+                  - ec2:ModifyInstanceAttribute
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                Resource:
+                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-StateTableArn'
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource:
+                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-AlertTopicArn'
+
+  RemediationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-remediation'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt RemediationRole.Arn
+      Timeout: 60
+      MemorySize: 512
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          PROJECT_NAME: !Ref ProjectName
+          STATE_TABLE_NAME:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-StateTableName'
+          ALERT_TOPIC_ARN:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-AlertTopicArn'
+      Code:
+        ZipFile: |
+          import json
+          import logging
+          from typing import Dict, List
+          
+          import boto3
+          from botocore.exceptions import ClientError
+          
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          
+          iam = boto3.client("iam")
+          ec2 = boto3.client("ec2")
+          
+          def handler(event, context):
+              """Attempt automated remediation actions based on the Step Functions payload."""
+              logger.info("Starting remediation with payload: %s", json.dumps(event))
+              
+              actions: List[Dict[str, str]] = []
+              errors: List[str] = []
+              
+              affected_user = event.get("affected_user")
+              if affected_user:
+                  try:
+                      disabled = disable_access_keys(affected_user, event.get("access_key_id"))
+                      actions.append({"action": "DISABLE_ACCESS_KEYS", "details": disabled})
+                  except ClientError as exc:
+                      logger.error("Failed to disable keys for %s: %s", affected_user, exc, exc_info=True)
+                      errors.append(f"iam:{exc.response['Error']['Code']}")
+                  
+                  mfa_device = event.get("mfa_serial")
+                  if mfa_device:
+                      try:
+                          iam.deactivate_mfa_device(UserName=affected_user, SerialNumber=mfa_device)
+                          actions.append({"action": "DEACTIVATE_MFA", "details": mfa_device})
+                      except ClientError as exc:
+                          logger.error("Failed to deactivate MFA for %s: %s", affected_user, exc, exc_info=True)
+                          errors.append(f"iam:{exc.response['Error']['Code']}")
+              
+              sg_id = event.get("security_group_id")
+              malicious_ip = event.get("malicious_ip")
+              if sg_id and malicious_ip:
+                  try:
+                      revoke_ingress(sg_id, malicious_ip)
+                      actions.append({"action": "REVOKE_SG", "details": f"{sg_id}:{malicious_ip}"})
+                  except ClientError as exc:
+                      logger.error("Failed to revoke ingress on %s: %s", sg_id, exc, exc_info=True)
+                      errors.append(f"ec2:{exc.response['Error']['Code']}")
+              
+              response = {
+                  "remediation_performed": bool(actions),
+                  "actions_taken": actions,
+                  "errors": errors,
+                  "timestamp": __import__('datetime').datetime.utcnow().isoformat()
+              }
+              
+              logger.info("Remediation complete: %s", json.dumps(response))
+              return response
+          
+          def disable_access_keys(user_name, key_id=None):
+              """Disable IAM access keys"""
+              try:
+                  if key_id:
+                      iam.update_access_key(UserName=user_name, AccessKeyId=key_id, Status='Inactive')
+                      return f"Disabled {key_id}"
+                  else:
+                      keys = iam.list_access_keys(UserName=user_name)['AccessKeyMetadata']
+                      for key in keys:
+                          iam.update_access_key(UserName=user_name, AccessKeyId=key['AccessKeyId'], Status='Inactive')
+                      return f"Disabled {len(keys)} keys"
+              except Exception as e:
+                  raise
+          
+          def revoke_ingress(sg_id, ip):
+              """Revoke security group ingress rule"""
+              try:
+                  ec2.revoke_security_group_ingress(
+                      GroupId=sg_id,
+                      IpPermissions=[{
+                          'IpProtocol': '-1',
+                          'IpRanges': [{'CidrIp': f'{ip}/32'}]
+                      }]
+                  )
+                  return f"Revoked {ip} from {sg_id}"
+              except Exception as e:
+                  raise
+
+  RemediationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${RemediationLambda}'
+      RetentionInDays: 14
+
+Outputs:
+  AlertTriageFunctionName:
+    Description: Name of the alert triage Lambda function
+    Value: !Ref AlertTriageLambda
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-AlertTriageName'
+  
+  AlertTriageFunctionArn:
+    Description: ARN of the alert triage Lambda function
+    Value: !GetAtt AlertTriageLambda.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-AlertTriageArn'
+  
+  RemediationFunctionName:
+    Description: Name of the remediation Lambda function
+    Value: !Ref RemediationLambda
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-RemediationName'
+  
+  RemediationFunctionArn:
+    Description: ARN of the remediation Lambda function
+    Value: !GetAtt RemediationLambda.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-RemediationArn'
