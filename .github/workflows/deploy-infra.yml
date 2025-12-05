@@ -92,7 +92,7 @@ jobs:
       - name: Deploy Foundation Stack
         run: |
           aws cloudformation deploy \
-            --template-file cloudformation/01-foundation.yaml \
+            --template-file cloudformation/root-stack.yaml \
             --stack-name ${{ env.PROJECT_NAME }}-foundation-${{ steps.env.outputs.environment }} \
             --parameter-overrides \
                 ProjectName=${{ env.PROJECT_NAME }} \
@@ -127,7 +127,7 @@ jobs:
       - name: Deploy Event Ingestion Stack
         run: |
           aws cloudformation deploy \
-            --template-file cloudformation/02-event-ingestion.yaml \
+            --template-file cloudformation/event-ingestion.yaml \
             --stack-name ${{ env.PROJECT_NAME }}-ingestion-${{ needs.deploy-foundation.outputs.environment }} \
             --parameter-overrides \
                 ProjectName=${{ env.PROJECT_NAME }} \
@@ -152,7 +152,7 @@ jobs:
       - name: Deploy Storage Stack
         run: |
           aws cloudformation deploy \
-            --template-file cloudformation/03-storage.yaml \
+            --template-file cloudformation/storage.yaml \
             --stack-name ${{ env.PROJECT_NAME }}-storage-${{ needs.deploy-foundation.outputs.environment }} \
             --parameter-overrides \
                 ProjectName=${{ env.PROJECT_NAME }} \
