@@ -1,0 +1,7 @@
+[
+  {
+    "Source": "aws.guardduty",
+    "DetailType": "GuardDuty Finding",
+    "Detail": "{\"schemaVersion\":\"2.0\",\"accountId\":\"194561596031\",\"region\":\"eu-central-1\",\"partition\":\"aws\",\"id\":\"test-finding-123\",\"arn\":\"arn:aws:guardduty:eu-central-1:194561596031:detector/test/finding/test-finding-123\",\"type\":\"Recon:EC2/PortProbeUnprotectedPort\",\"resource\":{\"resourceType\":\"Instance\",\"instanceDetails\":{\"instanceId\":\"i-1234567890abcdef0\",\"instanceType\":\"t2.micro\",\"launchTime\":\"2025-12-05T10:00:00Z\",\"tags\":[{\"key\":\"Name\",\"value\":\"test-instance\"}]}},\"service\":{\"serviceName\":\"guardduty\",\"detectorId\":\"test-detector\",\"action\":{\"actionType\":\"NETWORK_CONNECTION\",\"networkConnectionAction\":{\"connectionDirection\":\"INBOUND\",\"remoteIpDetails\":{\"ipAddressV4\":\"198.51.100.1\",\"country\":{\"countryName\":\"Example\"}},\"protocol\":\"TCP\",\"localPortDetails\":{\"port\":22}}},\"eventFirstSeen\":\"2025-12-05T10:00:00Z\",\"eventLastSeen\":\"2025-12-05T10:30:00Z\",\"archived\":false,\"count\":5},\"severity\":7.5,\"createdAt\":\"2025-12-05T10:00:00Z\",\"updatedAt\":\"2025-12-05T10:30:00Z\",\"title\":\"Unprotected port on EC2 instance is being probed\",\"description\":\"EC2 instance has an unprotected port that is being probed by a known malicious host.\"}"
+  }
+]
