@@ -1,0 +1,443 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Step Functions Orchestration Stack - Autonomous SOC Workflow
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Project name prefix
+  
+  Environment:
+    Type: String
+    Description: Environment (dev/staging/prod)
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+Resources:
+  # ============================================================================
+  # Step Functions Role
+  # ============================================================================
+  
+  StepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-stepfunctions-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaInvoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - Fn::ImportValue: !Sub '${ProjectName}-${Environment}-AlertTriageArn'
+                  - Fn::ImportValue: !Sub '${ProjectName}-${Environment}-RemediationArn'
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource: '*'
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                Resource:
+                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-StateTableArn'
+        - PolicyName: SNSPublish
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource:
+                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-AlertTopicArn'
+
+  # ============================================================================
+  # Bedrock Analysis Lambda
+  # ============================================================================
+  
+  BedrockAnalysisRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-bedrock-analysis-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BedrockInvoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource: '*'
+
+  BedrockAnalysisLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-bedrock-analysis'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt BedrockAnalysisRole.Arn
+      Timeout: 60
+      MemorySize: 512
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          PROJECT_NAME: !Ref ProjectName
+      Code:
+        ZipFile: |
+          import json
+          import logging
+          import boto3
+          
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          
+          bedrock = boto3.client('bedrock-runtime', region_name='eu-central-1')
+          
+          def handler(event, context):
+              """Use Amazon Bedrock to analyze security events with AI"""
+              logger.info("Starting Bedrock analysis for event: %s", event.get('event_id'))
+              
+              try:
+                  # Prepare context for Bedrock
+                  event_summary = {
+                      'event_type': event.get('event_type'),
+                      'severity': event.get('severity'),
+                      'source': event.get('source'),
+                      'threat_score': event.get('ml_prediction', {}).get('threat_score'),
+                      'priority': event.get('triage', {}).get('priority_level'),
+                      'description': event.get('raw_event', {}).get('title', 'Unknown')
+                  }
+                  
+                  # Create prompt for Claude
+                  prompt = f"""You are a security analyst reviewing a potential security threat. Analyze this event and provide:
+          
+          1. Risk Assessment (1-10 scale)
+          2. Attack Vector Analysis
+          3. Recommended Response Actions
+          4. Business Impact Estimation
+          
+          Event Details:
+          - Type: {event_summary['event_type']}
+          - Severity: {event_summary['severity']}
+          - Source: {event_summary['source']}
+          - ML Threat Score: {event_summary['threat_score']}
+          - Priority: {event_summary['priority']}
+          - Description: {event_summary['description']}
+          
+          Provide your analysis in JSON format with these keys: risk_score, attack_vector, recommended_actions (list), business_impact, confidence_level"""
+                  
+                  # Invoke Bedrock Claude model
+                  response = bedrock.invoke_model(
+                      modelId='anthropic.claude-3-5-sonnet-20241022-v2:0',
+                      body=json.dumps({
+                          'anthropic_version': 'bedrock-2023-05-31',
+                          'max_tokens': 1024,
+                          'messages': [
+                              {
+                                  'role': 'user',
+                                  'content': prompt
+                              }
+                          ]
+                      })
+                  )
+                  
+                  response_body = json.loads(response['body'].read())
+                  analysis_text = response_body['content'][0]['text']
+                  
+                  logger.info("Bedrock analysis complete")
+                  
+                  # Try to parse JSON from response
+                  try:
+                      # Extract JSON from markdown code blocks if present
+                      if '```json' in analysis_text:
+                          json_start = analysis_text.find('```json') + 7
+                          json_end = analysis_text.find('```', json_start)
+                          analysis_text = analysis_text[json_start:json_end].strip()
+                      elif '```' in analysis_text:
+                          json_start = analysis_text.find('```') + 3
+                          json_end = analysis_text.find('```', json_start)
+                          analysis_text = analysis_text[json_start:json_end].strip()
+                      
+                      bedrock_analysis = json.loads(analysis_text)
+                  except json.JSONDecodeError:
+                      # If parsing fails, create structured response from text
+                      bedrock_analysis = {
+                          'risk_score': 8,
+                          'attack_vector': 'Analysis text format',
+                          'recommended_actions': ['Review full analysis'],
+                          'business_impact': 'See full text',
+                          'confidence_level': 0.8,
+                          'raw_analysis': analysis_text
+                      }
+                  
+                  event['bedrock_analysis'] = bedrock_analysis
+                  return event
+                  
+              except Exception as exc:
+                  logger.error("Bedrock analysis failed: %s", exc, exc_info=True)
+                  event['bedrock_analysis'] = {
+                      'error': str(exc),
+                      'risk_score': 5,
+                      'confidence_level': 0.0
+                  }
+                  return event
+
+  BedrockAnalysisLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${BedrockAnalysisLambda}'
+      RetentionInDays: 14
+
+  # ============================================================================
+  # Step Functions State Machine
+  # ============================================================================
+  
+  SocWorkflow:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${ProjectName}-${Environment}-soc-workflow'
+      RoleArn: !GetAtt StepFunctionsRole.Arn
+      DefinitionString:
+        Fn::Sub:
+          - |
+            {
+              "Comment": "Autonomous SOC Workflow - Event Analysis and Response",
+              "StartAt": "AlertTriage",
+              "States": {
+                "AlertTriage": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::lambda:invoke",
+                  "Parameters": {
+                    "FunctionName": "${TriageLambda}",
+                    "Payload.$": "$"
+                  },
+                  "ResultPath": "$.triage_result",
+                  "ResultSelector": {
+                    "triage.$": "$.Payload.triage"
+                  },
+                  "Next": "MergeTriageResult"
+                },
+                "MergeTriageResult": {
+                  "Type": "Pass",
+                  "Parameters": {
+                    "event_id.$": "$.event_id",
+                    "timestamp.$": "$.timestamp",
+                    "source.$": "$.source",
+                    "severity.$": "$.severity",
+                    "event_type.$": "$.event_type",
+                    "ml_prediction.$": "$.ml_prediction",
+                    "raw_event.$": "$.raw_event",
+                    "triage.$": "$.triage_result.triage"
+                  },
+                  "Next": "CheckPriority"
+                },
+                "CheckPriority": {
+                  "Type": "Choice",
+                  "Choices": [
+                    {
+                      "Variable": "$.triage.priority_score",
+                      "NumericGreaterThan": 70,
+                      "Next": "BedrockAnalysis"
+                    }
+                  ],
+                  "Default": "LogLowPriority"
+                },
+                "BedrockAnalysis": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::lambda:invoke",
+                  "Parameters": {
+                    "FunctionName": "${BedrockLambda}",
+                    "Payload.$": "$"
+                  },
+                  "ResultPath": "$.bedrock_result",
+                  "ResultSelector": {
+                    "bedrock_analysis.$": "$.Payload.bedrock_analysis"
+                  },
+                  "Next": "MergeBedrockResult",
+                  "Catch": [
+                    {
+                      "ErrorEquals": ["States.ALL"],
+                      "Next": "BedrockAnalysisFailed",
+                      "ResultPath": "$.error"
+                    }
+                  ]
+                },
+                "MergeBedrockResult": {
+                  "Type": "Pass",
+                  "Parameters": {
+                    "event_id.$": "$.event_id",
+                    "timestamp.$": "$.timestamp",
+                    "source.$": "$.source",
+                    "severity.$": "$.severity",
+                    "event_type.$": "$.event_type",
+                    "ml_prediction.$": "$.ml_prediction",
+                    "raw_event.$": "$.raw_event",
+                    "triage.$": "$.triage",
+                    "bedrock_analysis.$": "$.bedrock_result.bedrock_analysis"
+                  },
+                  "Next": "CheckAutoRemediate"
+                },
+                "BedrockAnalysisFailed": {
+                  "Type": "Pass",
+                  "Result": {
+                    "bedrock_analysis": {
+                      "error": "Analysis failed",
+                      "risk_score": 5
+                    }
+                  },
+                  "ResultPath": "$.bedrock_result",
+                  "Next": "MergeBedrockResult"
+                },
+                "CheckAutoRemediate": {
+                  "Type": "Choice",
+                  "Choices": [
+                    {
+                      "Variable": "$.triage.auto_remediate",
+                      "BooleanEquals": true,
+                      "Next": "AutomaticRemediation"
+                    },
+                    {
+                      "Variable": "$.triage.requires_human_review",
+                      "BooleanEquals": true,
+                      "Next": "NotifySecurityTeam"
+                    }
+                  ],
+                  "Default": "SaveToDynamoDB"
+                },
+                "AutomaticRemediation": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::lambda:invoke",
+                  "Parameters": {
+                    "FunctionName": "${RemediateLambda}",
+                    "Payload.$": "$"
+                  },
+                  "ResultPath": "$.remediation_result",
+                  "Next": "SaveToDynamoDB",
+                  "Catch": [
+                    {
+                      "ErrorEquals": ["States.ALL"],
+                      "Next": "RemediationFailed",
+                      "ResultPath": "$.remediation_error"
+                    }
+                  ]
+                },
+                "RemediationFailed": {
+                  "Type": "Pass",
+                  "Result": {
+                    "remediation_performed": false,
+                    "error": "Remediation failed"
+                  },
+                  "ResultPath": "$.remediation_result",
+                  "Next": "NotifySecurityTeam"
+                },
+                "NotifySecurityTeam": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::sns:publish",
+                  "Parameters": {
+                    "TopicArn": "${TopicArn}",
+                    "Subject": "Security Alert: High Priority Event Requires Review",
+                    "Message": {
+                      "event_id.$": "$.event_id",
+                      "priority.$": "$.triage.priority_level",
+                      "threat_score.$": "$.ml_prediction.threat_score",
+                      "bedrock_risk.$": "$.bedrock_analysis.risk_score",
+                      "message": "This event requires human review"
+                    }
+                  },
+                  "ResultPath": "$.notification_result",
+                  "Next": "SaveToDynamoDB"
+                },
+                "LogLowPriority": {
+                  "Type": "Pass",
+                  "Result": {
+                    "message": "Low priority event logged for monitoring"
+                  },
+                  "ResultPath": "$.log_result",
+                  "Next": "SaveToDynamoDB"
+                },
+                "SaveToDynamoDB": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::dynamodb:putItem",
+                  "Parameters": {
+                    "TableName": "${TableName}",
+                    "Item": {
+                      "alert_id": {
+                        "S.$": "$.event_id"
+                      },
+                      "timestamp": {
+                        "S.$": "$.timestamp"
+                      },
+                      "priority_score": {
+                        "N.$": "States.Format('{}', $.triage.priority_score)"
+                      },
+                      "priority_level": {
+                        "S.$": "$.triage.priority_level"
+                      },
+                      "threat_score": {
+                        "N.$": "States.Format('{}', $.ml_prediction.threat_score)"
+                      },
+                      "event_data": {
+                        "S.$": "States.JsonToString($)"
+                      }
+                    }
+                  },
+                  "ResultPath": "$.dynamodb_result",
+                  "End": true
+                }
+              }
+            }
+          - TriageLambda:
+              Fn::ImportValue: !Sub '${ProjectName}-${Environment}-AlertTriageName'
+            RemediateLambda:
+              Fn::ImportValue: !Sub '${ProjectName}-${Environment}-RemediationName'
+            BedrockLambda: !Ref BedrockAnalysisLambda
+            TopicArn:
+              Fn::ImportValue: !Sub '${ProjectName}-${Environment}-AlertTopicArn'
+            TableName:
+              Fn::ImportValue: !Sub '${ProjectName}-${Environment}-StateTableName'
+
+Outputs:
+  StateMachineArn:
+    Description: ARN of the Step Functions state machine
+    Value: !GetAtt SocWorkflow.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-WorkflowArn'
+  
+  StateMachineName:
+    Description: Name of the Step Functions state machine
+    Value: !GetAtt SocWorkflow.Name
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-WorkflowName'
+  
+  BedrockAnalysisFunctionArn:
+    Description: ARN of the Bedrock analysis Lambda function
+    Value: !GetAtt BedrockAnalysisLambda.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-BedrockAnalysisArn'

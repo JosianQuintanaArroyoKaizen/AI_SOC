@@ -209,9 +209,34 @@ jobs:
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
+  deploy-orchestration:
+    name: Deploy Orchestration Stack
+    needs: [deploy-foundation, deploy-event-ingestion, deploy-storage, deploy-ml-inference, deploy-triage-remediation]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy Orchestration Stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/06-orchestration.yaml \
+            --stack-name ${{ env.PROJECT_NAME }}-orchestration-${{ needs.deploy-foundation.outputs.environment }} \
+            --parameter-overrides \
+                ProjectName=${{ env.PROJECT_NAME }} \
+                Environment=${{ needs.deploy-foundation.outputs.environment }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
   notify:
     name: Notify Deployment Status
-    needs: [deploy-foundation, deploy-event-ingestion, deploy-storage, deploy-ml-inference, deploy-triage-remediation]
+    needs: [deploy-foundation, deploy-event-ingestion, deploy-storage, deploy-ml-inference, deploy-triage-remediation, deploy-orchestration]
     runs-on: ubuntu-latest
     if: always()
     steps:
