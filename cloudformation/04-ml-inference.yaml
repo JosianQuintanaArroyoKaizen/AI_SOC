@@ -43,6 +43,15 @@ Resources:
                   - kinesis:ListShards
                 Resource:
                   Fn::ImportValue: !Sub '${ProjectName}-${Environment}-KinesisStreamArn'
+        - PolicyName: KmsDecrypt
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                Resource:
+                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-KmsKeyArn'
         - PolicyName: DynamoDBAccess
           PolicyDocument:
             Version: '2012-10-17'
