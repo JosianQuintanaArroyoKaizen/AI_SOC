@@ -1,6 +1,9 @@
 {
   "ProjectName": "ai-soc",
   "Environment": "dev",
-  "AlertEmail": "security-dev@example.com",
-  "KinesisShardCount": 1
+  "AlertEmail": "j.quintana-arroyo@kaizenreporting.com",
+  "KinesisShardCount": 1,
+  "LambdaArtifactBucket": "ai-soc-dev-artifacts-194561596031",
+  "LambdaArtifactPrefix": "templates",
+  "ModelArtifactUri": "s3://ai-soc-dev-artifacts-194561596031/ml-models/threat-detection.tar.gz"
 }
