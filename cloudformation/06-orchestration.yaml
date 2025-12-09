@@ -41,6 +41,7 @@ Resources:
                 Resource:
                   - Fn::ImportValue: !Sub '${ProjectName}-${Environment}-AlertTriageArn'
                   - Fn::ImportValue: !Sub '${ProjectName}-${Environment}-RemediationArn'
+                  - !GetAtt BedrockAnalysisLambda.Arn
         - PolicyName: BedrockAccess
           PolicyDocument:
             Version: '2012-10-17'
