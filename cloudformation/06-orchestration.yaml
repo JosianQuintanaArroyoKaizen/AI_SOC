@@ -154,9 +154,9 @@ Resources:
           
           Provide your analysis in JSON format with these keys: risk_score, attack_vector, recommended_actions (list), business_impact, confidence_level"""
                   
-                  # Invoke Bedrock Claude model
+                  # Invoke Bedrock Claude model (using cross-region inference profile for better availability)
                   response = bedrock.invoke_model(
-                      modelId='anthropic.claude-3-5-sonnet-20241022-v2:0',
+                      modelId='eu.anthropic.claude-3-7-sonnet-20250219-v1:0',
                       body=json.dumps({
                           'anthropic_version': 'bedrock-2023-05-31',
                           'max_tokens': 1024,
