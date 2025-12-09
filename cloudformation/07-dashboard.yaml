@@ -1,0 +1,160 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Serverless Threat Dashboard - API Gateway + Lambda + S3 Website'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: ai-soc
+  Environment:
+    Type: String
+    Default: dev
+
+Resources:
+  # ============================================================================
+  # Dashboard API Lambda
+  # ============================================================================
+  
+  DashboardApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-dashboard-api-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                Resource:
+                  Fn::ImportValue: !Sub '${ProjectName}-${Environment}-StateTableArn'
+
+  DashboardApiLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-dashboard-api'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt DashboardApiRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          TABLE_NAME: 
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-StateTableName'
+      Code:
+        S3Bucket: !Sub '${ProjectName}-${Environment}-artifacts-194561596031'
+        S3Key: lambda/dashboard-api.zip
+
+  # ============================================================================
+  # API Gateway
+  # ============================================================================
+  
+  DashboardApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-dashboard-api'
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - GET
+          - OPTIONS
+        AllowHeaders:
+          - '*'
+
+  DashboardApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref DashboardApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt DashboardApiLambda.Arn
+      PayloadFormatVersion: '2.0'
+
+  ThreatsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref DashboardApi
+      RouteKey: 'GET /threats'
+      Target: !Sub 'integrations/${DashboardApiIntegration}'
+
+  StatsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref DashboardApi
+      RouteKey: 'GET /stats'
+      Target: !Sub 'integrations/${DashboardApiIntegration}'
+
+  DashboardApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref DashboardApi
+      StageName: '$default'
+      AutoDeploy: true
+
+  LambdaApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DashboardApiLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${DashboardApi}/*'
+
+  # ============================================================================
+  # S3 Static Website
+  # ============================================================================
+  
+  DashboardBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-${Environment}-dashboard-${AWS::AccountId}'
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  DashboardBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DashboardBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub '${DashboardBucket.Arn}/*'
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !GetAtt DashboardApi.ApiEndpoint
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-DashboardApiEndpoint'
+  
+  WebsiteURL:
+    Description: S3 Static Website URL
+    Value: !GetAtt DashboardBucket.WebsiteURL
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-DashboardWebsiteURL'
+  
+  BucketName:
+    Description: Dashboard S3 bucket name
+    Value: !Ref DashboardBucket
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-DashboardBucket'
