@@ -5,7 +5,8 @@ on:
     branches:
       - master
     paths:
-      - 'docs/**'
+      - 'dashboard/templates/**'
+      - 'dashboard/static/**'
       - '.github/workflows/deploy-s3-frontend.yml'
   workflow_dispatch:
 
@@ -32,36 +33,39 @@ jobs:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Sync docs to S3
+      - name: Deploy Threat Dashboard to S3
         run: |
-          echo "🚀 Deploying frontend to S3 bucket: ${{ env.S3_BUCKET }}"
+          echo "🚀 Deploying threat dashboard to S3 bucket: ${{ env.S3_BUCKET }}"
           
-          # Sync all files from docs/ to S3
-          aws s3 sync docs/ s3://${{ env.S3_BUCKET }}/ \
-            --delete \
-            --cache-control "public, max-age=3600" \
-            --exclude ".git/*" \
-            --exclude "*.md"
+          # Get API Gateway endpoint from CloudFormation
+          API_ENDPOINT=$(aws cloudformation describe-stacks \
+            --stack-name ai-soc-dev-dashboard \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
+            --output text 2>/dev/null || echo "")
           
-          # Set specific cache control for HTML files (shorter cache)
-          aws s3 sync docs/ s3://${{ env.S3_BUCKET }}/ \
-            --exclude "*" \
-            --include "*.html" \
+          if [ -z "$API_ENDPOINT" ]; then
+            echo "⚠️  Warning: Could not retrieve API endpoint from CloudFormation"
+            echo "    Dashboard will need manual API configuration"
+          else
+            echo "✅ Found API endpoint: $API_ENDPOINT"
+            
+            # Update the API URL in threats.html
+            sed -i "s|: 'https://YOUR_API_ID.execute-api.YOUR_REGION.amazonaws.com'|: '${API_ENDPOINT}'|g" dashboard/templates/threats.html
+          fi
+          
+          # Copy threats.html as index.html (main page)
+          aws s3 cp dashboard/templates/threats.html s3://${{ env.S3_BUCKET }}/index.html \
             --cache-control "public, max-age=300" \
             --content-type "text/html"
           
-          # Set cache control for assets (longer cache)
-          aws s3 sync docs/ s3://${{ env.S3_BUCKET }}/ \
-            --exclude "*" \
-            --include "*.css" \
-            --include "*.js" \
-            --include "*.png" \
-            --include "*.jpg" \
-            --include "*.jpeg" \
-            --include "*.gif" \
-            --include "*.svg" \
-            --include "*.ico" \
-            --cache-control "public, max-age=31536000"
+          # Sync static assets if they exist
+          if [ -d "dashboard/static" ]; then
+            aws s3 sync dashboard/static/ s3://${{ env.S3_BUCKET }}/static/ \
+              --delete \
+              --cache-control "public, max-age=31536000"
+          fi
+          
+          echo "✅ Threat dashboard deployed successfully"
 
       - name: Invalidate CloudFront cache (if applicable)
         if: vars.CLOUDFRONT_DISTRIBUTION_ID != ''
@@ -74,14 +78,23 @@ jobs:
       - name: Deployment Summary
         run: |
           echo "=========================================="
-          echo "  S3 FRONTEND DEPLOYMENT COMPLETE"
+          echo "  THREAT DASHBOARD DEPLOYMENT COMPLETE"
           echo "=========================================="
           echo ""
           echo "✅ S3 Bucket: ${{ env.S3_BUCKET }}"
           echo "✅ Region: ${{ env.AWS_REGION }}"
           echo ""
+          
+          # Get API endpoint
+          API_ENDPOINT=$(aws cloudformation describe-stacks \
+            --stack-name ai-soc-dev-dashboard \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
+            --output text 2>/dev/null || echo "Not found")
+          
           WEBSITE_URL="http://${{ env.S3_BUCKET }}.s3-website-${{ env.AWS_REGION }}.amazonaws.com"
-          echo "🌐 Website URL: $WEBSITE_URL"
+          
+          echo "🌐 Dashboard URL: $WEBSITE_URL"
+          echo "🔌 API Endpoint: $API_ENDPOINT"
           echo ""
           echo "Deployment completed at $(date)"
           echo "=========================================="

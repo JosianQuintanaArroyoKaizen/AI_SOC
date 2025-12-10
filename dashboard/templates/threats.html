@@ -404,6 +404,11 @@
     </div>
     
     <script>
+        // API Configuration - Update this with your API Gateway endpoint
+        const API_BASE_URL = window.location.hostname.includes('localhost') || window.location.hostname.includes('127.0.0.1')
+            ? '/api'  // For local development with Flask
+            : 'https://YOUR_API_ID.execute-api.YOUR_REGION.amazonaws.com';  // For S3 deployment
+        
         // Store all threats data
         let allThreats = {
             critical: [],
@@ -526,7 +531,7 @@
         }
         
         function loadStats() {
-            fetch('/api/stats')
+            fetch(`${API_BASE_URL}/stats`)
                 .then(res => res.json())
                 .then(data => {
                     if (data.success) {
@@ -552,7 +557,7 @@
                 document.getElementById(`threat-list-${severity}`).innerHTML = '<div class="loading">Loading threats...</div>';
             });
             
-            fetch('/api/threats')
+            fetch(`${API_BASE_URL}/threats`)
                 .then(res => res.json())
                 .then(data => {
                     if (!data.success) {
