@@ -11,8 +11,9 @@ on:
   workflow_dispatch:
 
 env:
-  AWS_REGION: us-east-1  # Change to your region
+  AWS_REGION: eu-central-1  # Your actual region
   S3_BUCKET: ai-soc-dev-dashboard-194561596031  # From your CloudFormation template
+  STACK_NAME: ai-soc-dashboard-dev  # Your actual stack name
 
 jobs:
   deploy-frontend:
@@ -39,7 +40,8 @@ jobs:
           
           # Get API Gateway endpoint from CloudFormation
           API_ENDPOINT=$(aws cloudformation describe-stacks \
-            --stack-name ai-soc-dev-dashboard \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
             --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
             --output text 2>/dev/null || echo "")
           
@@ -49,18 +51,24 @@ jobs:
           else
             echo "✅ Found API endpoint: $API_ENDPOINT"
             
-            # Update the API URL in threats.html
-            sed -i "s|: 'https://YOUR_API_ID.execute-api.YOUR_REGION.amazonaws.com'|: '${API_ENDPOINT}'|g" dashboard/templates/threats.html
+            # Create a temporary file with the updated API endpoint
+            sed "s|https://YOUR_API_ID.execute-api.YOUR_REGION.amazonaws.com|${API_ENDPOINT}|g" \
+              dashboard/templates/threats.html > /tmp/threats_updated.html
+            
+            # Use the updated file
+            mv /tmp/threats_updated.html dashboard/templates/threats.html
           fi
           
           # Copy threats.html as index.html (main page)
           aws s3 cp dashboard/templates/threats.html s3://${{ env.S3_BUCKET }}/index.html \
+            --region ${{ env.AWS_REGION }} \
             --cache-control "public, max-age=300" \
             --content-type "text/html"
           
           # Sync static assets if they exist
           if [ -d "dashboard/static" ]; then
             aws s3 sync dashboard/static/ s3://${{ env.S3_BUCKET }}/static/ \
+              --region ${{ env.AWS_REGION }} \
               --delete \
               --cache-control "public, max-age=31536000"
           fi
@@ -87,11 +95,12 @@ jobs:
           
           # Get API endpoint
           API_ENDPOINT=$(aws cloudformation describe-stacks \
-            --stack-name ai-soc-dev-dashboard \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
             --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
             --output text 2>/dev/null || echo "Not found")
           
-          WEBSITE_URL="http://${{ env.S3_BUCKET }}.s3-website-${{ env.AWS_REGION }}.amazonaws.com"
+          WEBSITE_URL="http://${{ env.S3_BUCKET }}.s3-website.${{ env.AWS_REGION }}.amazonaws.com"
           
           echo "🌐 Dashboard URL: $WEBSITE_URL"
           echo "🔌 API Endpoint: $API_ENDPOINT"
