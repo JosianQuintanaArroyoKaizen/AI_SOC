@@ -25,33 +25,50 @@ def index():
 def get_threats():
     """Get all threats from DynamoDB"""
     try:
-        response = dynamodb.scan(
-            TableName=DYNAMODB_TABLE,
-            Limit=50
-        )
-        
         threats = []
-        for item in response.get('Items', []):
-            # Parse the event_data JSON string
-            event_data_str = item.get('event_data', {}).get('S', '{}')
-            try:
-                event_data = json.loads(event_data_str)
-            except json.JSONDecodeError:
-                event_data = {}
+        last_evaluated_key = None
+        
+        # Paginate through all results
+        while True:
+            scan_kwargs = {'TableName': DYNAMODB_TABLE}
+            if last_evaluated_key:
+                scan_kwargs['ExclusiveStartKey'] = last_evaluated_key
             
-            threat = {
-                'alert_id': item.get('alert_id', {}).get('S', 'N/A'),
-                'timestamp': item.get('timestamp', {}).get('S', 'N/A'),
-                'severity': item.get('severity', {}).get('S', event_data.get('severity', 'UNKNOWN')),
-                'priority_score': float(item.get('priority_score', {}).get('N', 0)),
-                'threat_score': float(item.get('threat_score', {}).get('N', 0)),
-                'event_type': event_data.get('event_type', 'Unknown'),
-                'source': event_data.get('source', 'Unknown'),
-                'triage': event_data.get('triage', {}),
-                'bedrock_analysis': event_data.get('bedrock_analysis', {}),
-                'remediation_result': event_data.get('remediation_result', {}),
-            }
-            threats.append(threat)
+            response = dynamodb.scan(**scan_kwargs)
+            
+            for item in response.get('Items', []):
+                # Extract ml_prediction nested structure
+                ml_prediction = item.get('ml_prediction', {}).get('M', {})
+                threat_score = float(ml_prediction.get('threat_score', {}).get('N', 0))
+                
+                # Parse raw_event for additional context if needed
+                raw_event_str = item.get('raw_event', {}).get('S', '{}')
+                try:
+                    raw_event = json.loads(raw_event_str)
+                except json.JSONDecodeError:
+                    raw_event = {}
+                
+                # Calculate priority score based on threat score and severity
+                severity = item.get('severity', {}).get('S', 'UNKNOWN')
+                severity_weights = {'CRITICAL': 100, 'HIGH': 75, 'MEDIUM': 50, 'LOW': 25, 'UNKNOWN': 0}
+                priority_score = (threat_score * 100) * 0.6 + severity_weights.get(severity, 0) * 0.4
+                
+                threat = {
+                    'alert_id': item.get('alert_id', {}).get('S', 'N/A'),
+                    'timestamp': item.get('timestamp', {}).get('S', 'N/A'),
+                    'severity': severity,
+                    'priority_score': priority_score,
+                    'threat_score': threat_score * 100,  # Convert to 0-100 scale
+                    'event_type': item.get('event_type', {}).get('S', 'Unknown'),
+                    'source': item.get('source', {}).get('S', 'Unknown'),
+                    'raw_event': raw_event,
+                }
+                threats.append(threat)
+            
+            # Check if there are more results
+            last_evaluated_key = response.get('LastEvaluatedKey')
+            if not last_evaluated_key:
+                break
         
         # Sort by priority score (highest first)
         threats.sort(key=lambda x: x['priority_score'], reverse=True)
@@ -104,36 +121,42 @@ def get_threat_detail(alert_id):
 def get_stats():
     """Get threat statistics"""
     try:
-        response = dynamodb.scan(TableName=DYNAMODB_TABLE)
-        items = response.get('Items', [])
+        items = []
+        last_evaluated_key = None
+        
+        # Paginate through all results
+        while True:
+            scan_kwargs = {'TableName': DYNAMODB_TABLE}
+            if last_evaluated_key:
+                scan_kwargs['ExclusiveStartKey'] = last_evaluated_key
+            
+            response = dynamodb.scan(**scan_kwargs)
+            items.extend(response.get('Items', []))
+            
+            last_evaluated_key = response.get('LastEvaluatedKey')
+            if not last_evaluated_key:
+                break
         
         total = len(items)
         by_severity = {'CRITICAL': 0, 'HIGH': 0, 'MEDIUM': 0, 'LOW': 0, 'UNKNOWN': 0}
-        auto_remediated = 0
-        human_review = 0
+        high_threat = 0
         
         for item in items:
-            event_data_str = item.get('event_data', {}).get('S', '{}')
-            try:
-                event_data = json.loads(event_data_str)
-                severity = event_data.get('severity', 'UNKNOWN')
-                by_severity[severity] = by_severity.get(severity, 0) + 1
-                
-                triage = event_data.get('triage', {})
-                if triage.get('auto_remediate'):
-                    auto_remediated += 1
-                if triage.get('requires_human_review'):
-                    human_review += 1
-            except:
-                by_severity['UNKNOWN'] += 1
+            severity = item.get('severity', {}).get('S', 'UNKNOWN')
+            by_severity[severity] = by_severity.get(severity, 0) + 1
+            
+            # Count high threat scores
+            ml_prediction = item.get('ml_prediction', {}).get('M', {})
+            threat_score = float(ml_prediction.get('threat_score', {}).get('N', 0))
+            if threat_score > 0.7:
+                high_threat += 1
         
         return jsonify({
             'success': True,
             'stats': {
                 'total_threats': total,
                 'by_severity': by_severity,
-                'auto_remediated': auto_remediated,
-                'human_review_required': human_review
+                'high_threat_score': high_threat
             }
         })
     
