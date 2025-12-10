@@ -181,8 +181,8 @@
                 <div class="stat-label">High Priority</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value" id="auto-remediated">-</div>
-                <div class="stat-label">Auto-Remediated</div>
+                <div class="stat-value severity-high" id="high-threat-score">-</div>
+                <div class="stat-label">High Threat Score</div>
             </div>
         </div>
         
@@ -208,7 +208,7 @@
                         document.getElementById('total-threats').textContent = data.stats.total_threats;
                         document.getElementById('critical-count').textContent = data.stats.by_severity.CRITICAL || 0;
                         document.getElementById('high-count').textContent = data.stats.by_severity.HIGH || 0;
-                        document.getElementById('auto-remediated').textContent = data.stats.auto_remediated;
+                        document.getElementById('high-threat-score').textContent = data.stats.high_threat_score;
                     }
                 })
                 .catch(err => console.error('Stats error:', err));
