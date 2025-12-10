@@ -63,6 +63,14 @@ Resources:
                   - dynamodb:GetItem
                 Resource:
                   Fn::ImportValue: !Sub '${ProjectName}-${Environment}-StateTableArn'
+        - PolicyName: SageMakerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sagemaker:InvokeEndpoint
+                Resource: !Sub 'arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:endpoint/*'
 
   # ML Inference Lambda Function
   MlInferenceLambda:
@@ -80,6 +88,7 @@ Resources:
           PROJECT_NAME: !Ref ProjectName
           STATE_TABLE_NAME:
             Fn::ImportValue: !Sub '${ProjectName}-${Environment}-StateTableName'
+          SAGEMAKER_ENDPOINT: !Sub '${ProjectName}-${Environment}-ids-endpoint'
       Code:
         ZipFile: |
           import json

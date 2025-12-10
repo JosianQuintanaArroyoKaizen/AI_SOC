@@ -120,6 +120,19 @@ Resources:
         - Arn: !GetAtt EventNormalizerFunction.Arn
           Id: EventNormalizerTarget
 
+  CloudTrailRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-cloudtrail-events'
+      Description: Capture all CloudTrail events for testing and analysis
+      State: ENABLED
+      EventPattern:
+        source:
+          - prefix: ''
+      Targets:
+        - Arn: !GetAtt EventNormalizerFunction.Arn
+          Id: EventNormalizerTarget
+
   EventNormalizerGuardDutyPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -135,6 +148,14 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt SecurityHubRule.Arn
+
+  EventNormalizerCloudTrailPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref EventNormalizerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt CloudTrailRule.Arn
 
 Outputs:
   KinesisStreamArn:

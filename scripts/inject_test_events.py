@@ -307,63 +307,88 @@ def extract_severity(detail, source):
 
 def main():
     parser = argparse.ArgumentParser(description="Inject test security events into AI-SOC pipeline")
-    parser.add_argument("--count", type=int, default=5, help="Number of events to inject")
-    parser.add_argument(
-        "--severity",
-        choices=["LOW", "MEDIUM", "HIGH", "CRITICAL"],
-        help="Override severity for all events",
-    )
-    parser.add_argument(
-        "--method",
-        choices=["eventbridge", "stepfunctions", "both"],
-        default="stepfunctions",
-        help="Injection method (default: stepfunctions for direct testing)",
-    )
-    parser.add_argument(
-        "--source",
-        choices=["guardduty", "securityhub", "mixed"],
-        default="mixed",
-        help="Event source type",
-    )
-    
+    parser.add_argument("--count", type=int, default=5, help="Number of synthetic events to inject")
+    parser.add_argument("--severity", choices=["LOW", "MEDIUM", "HIGH", "CRITICAL"], help="Override severity for all events")
+    parser.add_argument("--method", choices=["eventbridge", "stepfunctions", "both"], default="eventbridge", help="Injection method (default: eventbridge for full pipeline)")
+    parser.add_argument("--source", choices=["guardduty", "securityhub", "mixed"], default="mixed", help="Event source type for synthetic events")
+    parser.add_argument("--from-file", type=str, help="Path to JSON file with real CloudTrail/GuardDuty events to inject")
+
     args = parser.parse_args()
-    
-    # Map severity to numeric values
+
     severity_map = {"LOW": 3.0, "MEDIUM": 5.0, "HIGH": 7.5, "CRITICAL": 9.5}
     custom_severity = severity_map.get(args.severity) if args.severity else None
-    
-    print(f"\n🚀 Injecting {args.count} test events via {args.method}...\n")
-    
+
+    # If --from-file is provided, inject real events from file via EventBridge
+    if args.from_file:
+        print(f"\n🚀 Injecting events from {args.from_file} via EventBridge (full pipeline)...\n")
+        try:
+            with open(args.from_file, "r") as f:
+                data = json.load(f)
+            
+            # Handle CloudTrail export format with "Records" wrapper
+            if isinstance(data, dict) and "Records" in data:
+                events = data["Records"]
+                print(f"📦 Found {len(events)} CloudTrail events in Records array")
+            elif isinstance(data, list):
+                events = data
+                print(f"📦 Found {len(events)} events in array")
+            else:
+                raise ValueError("Expected JSON array or CloudTrail format with 'Records' key")
+                
+        except Exception as e:
+            print(f"❌ Failed to load events from file: {e}")
+            sys.exit(1)
+
+        success_count = 0
+        for i, event in enumerate(events):
+            # Wrap event as EventBridge entry
+            entry = {
+                "Source": event.get("eventSource", event.get("source", "aws.cloudtrail")),
+                "DetailType": event.get("eventName", event.get("detail-type", "CloudTrail Event")),
+                "Detail": json.dumps(event),
+                "EventBusName": "default",
+                "Time": event.get("eventTime", event.get("time", datetime.utcnow().isoformat() + "Z")),
+            }
+            response = events_client.put_events(Entries=[entry])
+            if response["FailedEntryCount"] == 0:
+                print(f"✅ Injected event {i+1}/{len(events)}: {entry['DetailType']}")
+                success_count += 1
+            else:
+                print(f"❌ Failed to inject event {i+1}: {response['Entries'][0].get('ErrorMessage')}")
+        print(f"\n✅ Successfully injected {success_count}/{len(events)} events from file.")
+        print(f"\n💡 Check your dashboard at http://localhost:5000 to see the results!")
+        print(f"   Events should appear in DynamoDB within 10-30 seconds.\n")
+        return
+
+    # Otherwise, inject synthetic events as before
+    print(f"\n🚀 Injecting {args.count} synthetic test events via {args.method}...\n")
     success_count = 0
-    
     for i in range(args.count):
-        # Select event source
         if args.source == "guardduty":
             template = random.choice(GUARDDUTY_TEMPLATES)
             event = create_guardduty_event(template, custom_severity)
         elif args.source == "securityhub":
             template = random.choice(SECURITYHUB_TEMPLATES)
             event = create_securityhub_event(template, custom_severity if custom_severity else None)
-        else:  # mixed
+        else:
             if random.choice([True, False]):
                 template = random.choice(GUARDDUTY_TEMPLATES)
                 event = create_guardduty_event(template, custom_severity)
             else:
                 template = random.choice(SECURITYHUB_TEMPLATES)
                 event = create_securityhub_event(template, custom_severity if custom_severity else None)
-        
-        # Inject event
+
         if args.method == "eventbridge":
             success = inject_event_via_eventbridge(event)
         elif args.method == "stepfunctions":
             success = inject_event_via_stepfunctions(event)
-        else:  # both
+        else:
             success = inject_event_via_eventbridge(event) or inject_event_via_stepfunctions(event)
-        
+
         if success:
             success_count += 1
-    
-    print(f"\n✅ Successfully injected {success_count}/{args.count} events")
+
+    print(f"\n✅ Successfully injected {success_count}/{args.count} synthetic events")
     print(f"\n💡 Check your dashboard at http://localhost:5000 to see the results!")
     print(f"   Events should appear in DynamoDB within 10-30 seconds.\n")
 
