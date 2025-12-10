@@ -10,7 +10,22 @@ import time
 from pathlib import Path
 
 import boto3
-from tqdm import tqdm
+
+try:
+    from tqdm import tqdm
+    HAS_TQDM = True
+except ImportError:
+    HAS_TQDM = False
+    def tqdm(iterable, **kwargs):
+        """Fallback progress indicator if tqdm not available"""
+        total = len(iterable) if hasattr(iterable, '__len__') else None
+        desc = kwargs.get('desc', 'Processing')
+        for i, item in enumerate(iterable):
+            if total and (i % 10 == 0 or i == total - 1):
+                print(f"\r{desc}: {i+1}/{total} ({((i+1)/total*100):.1f}%)", end='', flush=True)
+            yield item
+        if total:
+            print()  # New line after completion
 
 # Configuration
 INPUT_FILE = "datasets/aws_samples/shared_services.json"
