@@ -42,10 +42,29 @@ def handler(event, context):
             )
             
             result = json.loads(response["Body"].read().decode())
-            threat_score = Decimal(str(result.get("confidence", 1.0)))
-            prediction_label = result.get("prediction", "benign")
             
-            logger.info(f"ML Result for {event_id}: {prediction_label} (confidence: {threat_score})")
+            # Convert all floats to Decimal for DynamoDB
+            confidence = result.get("confidence", 1.0)
+            threat_score = Decimal(str(confidence))
+            prediction_label = result.get("prediction", "benign")
+            probabilities = result.get("probabilities", [])
+            
+            # Map prediction to severity level
+            # Model outputs: benign (0) or suspicious (1)
+            if prediction_label == "suspicious" or (isinstance(prediction_label, (int, float)) and prediction_label == 1):
+                ml_severity = "MEDIUM"
+                if isinstance(probabilities, list) and len(probabilities) > 1:
+                    ml_confidence = Decimal(str(probabilities[1]))
+                else:
+                    ml_confidence = threat_score
+            else:
+                ml_severity = "LOW"
+                if isinstance(probabilities, list) and len(probabilities) > 0:
+                    ml_confidence = Decimal(str(probabilities[0]))
+                else:
+                    ml_confidence = threat_score
+            
+            logger.info(f"ML Result for {event_id}: {ml_severity} (confidence: {ml_confidence})")
             
             # Write to DynamoDB (convert floats to Decimal for DynamoDB compatibility)
             item = {
@@ -53,10 +72,10 @@ def handler(event, context):
                 "timestamp": payload.get("timestamp", datetime.utcnow().isoformat()),
                 "source": payload.get("source", "unknown"),
                 "event_type": payload.get("event_type", "unknown"),
-                "severity": payload.get("severity", "UNKNOWN"),
+                "severity": ml_severity,  # Use ML-predicted severity
                 "raw_event": payload.get("raw_event", {}),
                 "ml_prediction": {
-                    "threat_score": threat_score,
+                    "threat_score": ml_confidence,
                     "prediction_label": prediction_label,
                     "model_version": result.get("model_version", "cloudtrail-1.0"),
                     "evaluated_at": datetime.utcnow().isoformat(),

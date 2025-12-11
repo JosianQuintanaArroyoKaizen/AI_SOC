@@ -23,6 +23,10 @@ def load_cloudtrail_data(file_path):
     """Load CloudTrail events from JSON file"""
     with open(file_path, 'r') as f:
         data = json.load(f)
+    
+    # Handle both array format and Records wrapper
+    if isinstance(data, list):
+        return data
     return data.get('Records', [])
 
 
@@ -167,14 +171,28 @@ def train_cloudtrail_model(data_file, output_dir='models'):
     print()
     
     # Extract features and labels
-    print("Extracting features and generating labels...")
+    print("Extracting features and labels...")
     features_list = []
     labels = []
+    use_llm_labels = 'llm_severity' in events[0] if events else False
+    
+    if use_llm_labels:
+        print("Using LLM-provided severity labels")
+    else:
+        print("Using heuristic-based labels")
     
     for event in events:
         try:
             features = extract_features(event)
-            label = label_event(event)
+            
+            # Use LLM labels if available, otherwise use heuristic
+            if use_llm_labels and 'llm_severity' in event:
+                llm_severity = event['llm_severity'].upper()
+                # Map severity to binary: LOW=0, MEDIUM/HIGH/CRITICAL=1
+                label = 1 if llm_severity in ['MEDIUM', 'HIGH', 'CRITICAL'] else 0
+            else:
+                label = label_event(event)
+            
             features_list.append(features)
             labels.append(label)
         except Exception as e:
@@ -304,10 +322,13 @@ def train_cloudtrail_model(data_file, output_dir='models'):
 
 
 if __name__ == '__main__':
-    data_file = 'datasets/aws_samples/shared_services.json'
+    # Use train.json if available (LLM-labeled), otherwise shared_services.json
+    train_file = 'datasets/aws_samples/train.json'
+    data_file = train_file if Path(train_file).exists() else 'datasets/aws_samples/shared_services.json'
     
     if not Path(data_file).exists():
         print(f"Error: Data file not found: {data_file}")
         sys.exit(1)
     
+    print(f"Using data file: {data_file}\n")
     train_cloudtrail_model(data_file)
