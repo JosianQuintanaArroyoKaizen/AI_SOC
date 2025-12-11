@@ -31,76 +31,8 @@ def load_cloudtrail_data(file_path):
 
 
 def label_event(event):
-    """
-    Heuristic-based labeling of CloudTrail events.
-    Returns 1 for suspicious, 0 for benign.
-    
-    Suspicious indicators:
-    - Error codes (potential unauthorized access attempts)
-    - Root account usage
-    - Unusual console logins (especially outside business hours)
-    - Destructive operations (Delete*, Terminate*)
-    - Security-related changes (IAM, Security Group modifications)
-    - Multiple assume role attempts
-    """
-    event_name = event.get('eventName', '')
-    error_code = event.get('errorCode')
-    user_identity = event.get('userIdentity', {})
-    event_time = event.get('eventTime', '')
-    source_ip = event.get('sourceIPAddress', '')
-    
-    # Suspicious patterns
-    suspicious_score = 0
-    
-    # 1. Error codes indicate potential unauthorized access
-    if error_code:
-        if error_code in ['UnauthorizedOperation', 'AccessDenied', 'InvalidPermission']:
-            suspicious_score += 3
-        else:
-            suspicious_score += 1
-    
-    # 2. Root account usage
-    if user_identity.get('type') == 'Root':
-        suspicious_score += 2
-    
-    # 3. Destructive operations
-    if any(event_name.startswith(prefix) for prefix in ['Delete', 'Terminate', 'Remove', 'Detach']):
-        suspicious_score += 2
-    
-    # 4. Security-sensitive operations (expanded list for better balance)
-    security_events = ['PutUserPolicy', 'AttachUserPolicy', 'CreateAccessKey', 
-                      'AuthorizeSecurityGroupIngress', 'ModifyDBInstance',
-                      'PutBucketPolicy', 'CreateFunction', 'UpdateFunctionCode',
-                      'UpdateEnvironmentSettings', 'UpdateUserSettings',
-                      'UpdateMembershipSettings', 'ModifyInstanceAttribute']
-    if event_name in security_events:
-        suspicious_score += 1
-    
-    # 5. High-frequency update operations (potential reconnaissance)
-    if event_name.startswith('Update') and event_name not in ['UpdateItem']:
-        suspicious_score += 0.5
-    
-    # 5. Off-hours activity (basic heuristic - can be improved)
-    try:
-        event_dt = datetime.fromisoformat(event_time.replace('Z', '+00:00'))
-        hour = event_dt.hour
-        # Suspicious if between midnight and 5 AM UTC
-        if 0 <= hour < 5:
-            suspicious_score += 1
-    except:
-        pass
-    
-    # 6. Console login from unusual source
-    if event_name == 'ConsoleLogin':
-        # Any console login gets slight suspicion boost (can be refined)
-        suspicious_score += 1
-    
-    # 7. AssumeRole operations (lateral movement indicator)
-    if 'AssumeRole' in event_name:
-        suspicious_score += 0.5
-    
-    # Label as suspicious if score >= 1.5 (lowered threshold for more balanced dataset)
-    return 1 if suspicious_score >= 1.5 else 0
+    # Heuristic labeling removed. Use LLM labels only.
+    raise NotImplementedError("Heuristic labeling is deprecated. Use LLM-labeled data.")
 
 
 def extract_features(event):
@@ -174,25 +106,13 @@ def train_cloudtrail_model(data_file, output_dir='models'):
     print("Extracting features and labels...")
     features_list = []
     labels = []
-    use_llm_labels = 'llm_severity' in events[0] if events else False
-    
-    if use_llm_labels:
-        print("Using LLM-provided severity labels")
-    else:
-        print("Using heuristic-based labels")
-    
+    print("Using LLM-provided severity labels")
     for event in events:
         try:
             features = extract_features(event)
-            
-            # Use LLM labels if available, otherwise use heuristic
-            if use_llm_labels and 'llm_severity' in event:
-                llm_severity = event['llm_severity'].upper()
-                # Map severity to binary: LOW=0, MEDIUM/HIGH/CRITICAL=1
-                label = 1 if llm_severity in ['MEDIUM', 'HIGH', 'CRITICAL'] else 0
-            else:
-                label = label_event(event)
-            
+            llm_severity = event.get('llm_severity', 'LOW').upper()
+            # Map severity to binary: LOW=0, MEDIUM/HIGH/CRITICAL=1
+            label = 1 if llm_severity in ['MEDIUM', 'HIGH', 'CRITICAL'] else 0
             features_list.append(features)
             labels.append(label)
         except Exception as e:
