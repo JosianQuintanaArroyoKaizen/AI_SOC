@@ -18,6 +18,23 @@ class DecimalEncoder(json.JSONEncoder):
             return int(obj) if obj % 1 == 0 else float(obj)
         return super(DecimalEncoder, self).default(obj)
 
+def deserialize_dynamodb_item(item):
+    """Convert DynamoDB item format to regular Python dict"""
+    if isinstance(item, dict):
+        if 'S' in item:
+            return item['S']
+        elif 'N' in item:
+            return float(item['N'])
+        elif 'BOOL' in item:
+            return item['BOOL']
+        elif 'NULL' in item:
+            return None
+        elif 'M' in item:
+            return {k: deserialize_dynamodb_item(v) for k, v in item['M'].items()}
+        elif 'L' in item:
+            return [deserialize_dynamodb_item(i) for i in item['L']]
+    return item
+
 def cors_headers():
     """CORS headers for browser access"""
     return {
@@ -49,31 +66,39 @@ def get_threats():
             result = dynamodb.scan(**scan_kwargs)
             
             for item in result.get('Items', []):
-                # Extract ml_prediction nested structure
-                ml_prediction = item.get('ml_prediction', {}).get('M', {})
-                threat_score = float(ml_prediction.get('threat_score', {}).get('N', 0))
+                # Deserialize the entire item first
+                deserialized_item = {k: deserialize_dynamodb_item(v) for k, v in item.items()}
                 
-                # Parse raw_event for additional context if needed
-                raw_event_str = item.get('raw_event', {}).get('S', '{}')
-                try:
-                    raw_event = json.loads(raw_event_str)
-                except json.JSONDecodeError:
-                    raw_event = {}
+                # Extract ml_prediction nested structure
+                ml_prediction = deserialized_item.get('ml_prediction', {})
+                threat_score = float(ml_prediction.get('threat_score', 0))
+                prediction_label = ml_prediction.get('prediction_label')
+                model_version = ml_prediction.get('model_version')
+                evaluated_at = ml_prediction.get('evaluated_at')
+                
+                # Get raw_event (already deserialized)
+                raw_event = deserialized_item.get('raw_event', {})
                 
                 # Calculate priority score based on threat score and severity
-                severity = item.get('severity', {}).get('S', 'UNKNOWN')
+                severity = deserialized_item.get('severity', 'UNKNOWN')
                 severity_weights = {'CRITICAL': 100, 'HIGH': 75, 'MEDIUM': 50, 'LOW': 25, 'UNKNOWN': 0}
                 priority_score = (threat_score * 100) * 0.6 + severity_weights.get(severity, 0) * 0.4
                 
                 threat = {
-                    'alert_id': item.get('alert_id', {}).get('S', 'N/A'),
-                    'timestamp': item.get('timestamp', {}).get('S', 'N/A'),
+                    'alert_id': deserialized_item.get('alert_id', 'N/A'),
+                    'timestamp': deserialized_item.get('timestamp', 'N/A'),
                     'severity': severity,
                     'priority_score': priority_score,
                     'threat_score': threat_score * 100,  # Convert to 0-100 scale
-                    'event_type': item.get('event_type', {}).get('S', 'Unknown'),
-                    'source': item.get('source', {}).get('S', 'Unknown'),
+                    'event_type': deserialized_item.get('event_type', 'Unknown'),
+                    'source': deserialized_item.get('source', 'Unknown'),
                     'raw_event': raw_event,
+                    'ml_prediction': {
+                        'prediction_label': prediction_label,
+                        'model_version': model_version,
+                        'evaluated_at': evaluated_at,
+                        'threat_score': threat_score * 100
+                    }
                 }
                 threats.append(threat)
             
@@ -121,12 +146,13 @@ def get_stats():
         high_threat = 0
         
         for item in items:
-            severity = item.get('severity', {}).get('S', 'UNKNOWN')
+            deserialized_item = {k: deserialize_dynamodb_item(v) for k, v in item.items()}
+            severity = deserialized_item.get('severity', 'UNKNOWN')
             by_severity[severity] = by_severity.get(severity, 0) + 1
             
             # Count high threat scores
-            ml_prediction = item.get('ml_prediction', {}).get('M', {})
-            threat_score = float(ml_prediction.get('threat_score', {}).get('N', 0))
+            ml_prediction = deserialized_item.get('ml_prediction', {})
+            threat_score = float(ml_prediction.get('threat_score', 0))
             if threat_score > 0.7:
                 high_threat += 1
         
