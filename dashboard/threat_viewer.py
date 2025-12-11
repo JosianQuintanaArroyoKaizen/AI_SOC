@@ -37,33 +37,42 @@ def get_threats():
             response = dynamodb.scan(**scan_kwargs)
             
             for item in response.get('Items', []):
-                # Extract ml_prediction nested structure
-                ml_prediction = item.get('ml_prediction', {}).get('M', {})
-                threat_score = float(ml_prediction.get('threat_score', {}).get('N', 0))
-                
-                # Parse raw_event for additional context if needed
-                raw_event_str = item.get('raw_event', {}).get('S', '{}')
-                try:
-                    raw_event = json.loads(raw_event_str)
-                except json.JSONDecodeError:
-                    raw_event = {}
-                
-                # Calculate priority score based on threat score and severity
-                severity = item.get('severity', {}).get('S', 'UNKNOWN')
-                severity_weights = {'CRITICAL': 100, 'HIGH': 75, 'MEDIUM': 50, 'LOW': 25, 'UNKNOWN': 0}
-                priority_score = (threat_score * 100) * 0.6 + severity_weights.get(severity, 0) * 0.4
-                
-                threat = {
-                    'alert_id': item.get('alert_id', {}).get('S', 'N/A'),
-                    'timestamp': item.get('timestamp', {}).get('S', 'N/A'),
-                    'severity': severity,
-                    'priority_score': priority_score,
-                    'threat_score': threat_score * 100,  # Convert to 0-100 scale
-                    'event_type': item.get('event_type', {}).get('S', 'Unknown'),
-                    'source': item.get('source', {}).get('S', 'Unknown'),
-                    'raw_event': raw_event,
-                }
-                threats.append(threat)
+                    # Extract ml_prediction nested structure
+                    ml_prediction = item.get('ml_prediction', {}).get('M', {})
+                    threat_score = float(ml_prediction.get('threat_score', {}).get('N', 0))
+                    prediction_label = ml_prediction.get('prediction_label', {}).get('S', None)
+                    model_version = ml_prediction.get('model_version', {}).get('S', None)
+                    evaluated_at = ml_prediction.get('evaluated_at', {}).get('S', None)
+
+                    # Parse raw_event for additional context if needed
+                    raw_event_str = item.get('raw_event', {}).get('S', '{}')
+                    try:
+                        raw_event = json.loads(raw_event_str)
+                    except json.JSONDecodeError:
+                        raw_event = {}
+
+                    # Calculate priority score based on threat score and severity
+                    severity = item.get('severity', {}).get('S', 'UNKNOWN')
+                    severity_weights = {'CRITICAL': 100, 'HIGH': 75, 'MEDIUM': 50, 'LOW': 25, 'UNKNOWN': 0}
+                    priority_score = (threat_score * 100) * 0.6 + severity_weights.get(severity, 0) * 0.4
+
+                    threat = {
+                        'alert_id': item.get('alert_id', {}).get('S', 'N/A'),
+                        'timestamp': item.get('timestamp', {}).get('S', 'N/A'),
+                        'severity': severity,
+                        'priority_score': priority_score,
+                        'threat_score': threat_score * 100,  # Convert to 0-100 scale
+                        'event_type': item.get('event_type', {}).get('S', 'Unknown'),
+                        'source': item.get('source', {}).get('S', 'Unknown'),
+                        'raw_event': raw_event,
+                        'ml_prediction': {
+                            'prediction_label': prediction_label,
+                            'model_version': model_version,
+                            'evaluated_at': evaluated_at,
+                            'threat_score': threat_score * 100
+                        }
+                    }
+                    threats.append(threat)
             
             # Check if there are more results
             last_evaluated_key = response.get('LastEvaluatedKey')
