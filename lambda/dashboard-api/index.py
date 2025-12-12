@@ -54,42 +54,35 @@ def response(status_code, body):
 def get_threats():
     """Get all threats from DynamoDB"""
     try:
-        threats = []
+        threats_by_severity = {'CRITICAL': [], 'HIGH': [], 'MEDIUM': [], 'LOW': [], 'UNKNOWN': []}
         last_evaluated_key = None
-        
+
         # Paginate through all results
         while True:
             scan_kwargs = {'TableName': TABLE_NAME}
             if last_evaluated_key:
                 scan_kwargs['ExclusiveStartKey'] = last_evaluated_key
-            
+
             result = dynamodb.scan(**scan_kwargs)
-            
+
             for item in result.get('Items', []):
-                # Deserialize the entire item first
                 deserialized_item = {k: deserialize_dynamodb_item(v) for k, v in item.items()}
-                
-                # Extract ml_prediction nested structure
                 ml_prediction = deserialized_item.get('ml_prediction', {})
                 threat_score = float(ml_prediction.get('threat_score', 0))
                 prediction_label = ml_prediction.get('prediction_label')
                 model_version = ml_prediction.get('model_version')
                 evaluated_at = ml_prediction.get('evaluated_at')
-                
-                # Get raw_event (already deserialized)
                 raw_event = deserialized_item.get('raw_event', {})
-                
-                # Calculate priority score based on threat score and severity
                 severity = deserialized_item.get('severity', 'UNKNOWN')
                 severity_weights = {'CRITICAL': 100, 'HIGH': 75, 'MEDIUM': 50, 'LOW': 25, 'UNKNOWN': 0}
                 priority_score = (threat_score * 100) * 0.6 + severity_weights.get(severity, 0) * 0.4
-                
+
                 threat = {
                     'alert_id': deserialized_item.get('alert_id', 'N/A'),
                     'timestamp': deserialized_item.get('timestamp', 'N/A'),
                     'severity': severity,
                     'priority_score': priority_score,
-                    'threat_score': threat_score * 100,  # Convert to 0-100 scale
+                    'threat_score': threat_score * 100,
                     'event_type': deserialized_item.get('event_type', 'Unknown'),
                     'source': deserialized_item.get('source', 'Unknown'),
                     'raw_event': raw_event,
@@ -100,22 +93,28 @@ def get_threats():
                         'threat_score': threat_score * 100
                     }
                 }
-                threats.append(threat)
-            
-            # Check if there are more results
+                if severity not in threats_by_severity:
+                    threats_by_severity['UNKNOWN'].append(threat)
+                else:
+                    threats_by_severity[severity].append(threat)
+
             last_evaluated_key = result.get('LastEvaluatedKey')
             if not last_evaluated_key:
                 break
-        
-        # Sort by priority (highest first)
-        threats.sort(key=lambda x: x['priority_score'], reverse=True)
-        
+
+        # For each severity, sort by priority_score and take top 50
+        top_threats = {}
+        total_count = 0
+        for severity, threat_list in threats_by_severity.items():
+            sorted_threats = sorted(threat_list, key=lambda x: x['priority_score'], reverse=True)
+            top_threats[severity] = sorted_threats[:50]
+            total_count += len(top_threats[severity])
+
         return response(200, {
             'success': True,
-            'count': len(threats),
-            'threats': threats
+            'count': total_count,
+            'threats': top_threats
         })
-    
     except Exception as e:
         return response(500, {
             'success': False,

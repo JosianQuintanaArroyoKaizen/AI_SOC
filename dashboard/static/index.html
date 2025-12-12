@@ -834,21 +834,13 @@
                         return;
                     }
                     
-                    // Reset all threats
+                    // Backend now returns threats already grouped by severity
                     allThreats = {
-                        critical: [],
-                        high: [],
-                        medium: [],
-                        low: []
+                        critical: data.threats.CRITICAL || [],
+                        high: data.threats.HIGH || [],
+                        medium: data.threats.MEDIUM || [],
+                        low: data.threats.LOW || []
                     };
-                    
-                    // Group threats by severity
-                    data.threats.forEach(threat => {
-                        const severity = (threat.severity || 'UNKNOWN').toLowerCase();
-                        if (allThreats[severity]) {
-                            allThreats[severity].push(threat);
-                        }
-                    });
                     
                     // Render each severity level
                     ['critical', 'high', 'medium', 'low'].forEach(severity => {
