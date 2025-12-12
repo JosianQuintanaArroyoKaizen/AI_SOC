@@ -56,10 +56,15 @@ def get_threats():
     try:
         threats_by_severity = {'CRITICAL': [], 'HIGH': [], 'MEDIUM': [], 'LOW': [], 'UNKNOWN': []}
         last_evaluated_key = None
+        max_items_to_scan = 300  # Reduced limit - scan fewer items for faster response
 
-        # Paginate through all results
-        while True:
-            scan_kwargs = {'TableName': TABLE_NAME}
+        # Paginate through results with limit
+        items_scanned = 0
+        while items_scanned < max_items_to_scan:
+            scan_kwargs = {
+                'TableName': TABLE_NAME,
+                'Limit': min(100, max_items_to_scan - items_scanned)  # Fetch in batches of 100
+            }
             if last_evaluated_key:
                 scan_kwargs['ExclusiveStartKey'] = last_evaluated_key
 
@@ -98,11 +103,13 @@ def get_threats():
                 else:
                     threats_by_severity[severity].append(threat)
 
+            items_scanned += len(result.get('Items', []))
             last_evaluated_key = result.get('LastEvaluatedKey')
             if not last_evaluated_key:
                 break
 
         # For each severity, sort by priority_score and take top 50
+        # Also reduce max items to scan since we only need 50 per severity
         top_threats = {}
         total_count = 0
         for severity, threat_list in threats_by_severity.items():
