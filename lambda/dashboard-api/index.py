@@ -116,7 +116,7 @@ def get_threats():
     try:
         threats_by_priority = {'CRITICAL': [], 'HIGH': [], 'MEDIUM': [], 'LOW': [], 'UNKNOWN': []}
         last_evaluated_key = None
-        max_items_to_scan = 300  # Reduced limit - scan fewer items for faster response
+        max_items_to_scan = 1000  # Scan enough items to get accurate stats
 
         # Paginate through results with limit
         items_scanned = 0
@@ -179,15 +179,18 @@ def get_threats():
 
         # For each priority level, sort by priority_score and take top 50
         top_threats = {}
+        actual_counts = {}
         total_count = 0
         for priority_level, threat_list in threats_by_priority.items():
+            actual_counts[priority_level] = len(threat_list)  # Store actual count before limiting
             sorted_threats = sorted(threat_list, key=lambda x: x['priority_score'], reverse=True)
             top_threats[priority_level] = sorted_threats[:50]
-            total_count += len(top_threats[priority_level])
+            total_count += actual_counts[priority_level]  # Use actual count, not limited count
 
         return response(200, {
             'success': True,
             'count': total_count,
+            'counts_by_priority': actual_counts,  # Send actual counts to frontend
             'threats': top_threats
         })
     except Exception as e:
@@ -202,7 +205,7 @@ def get_stats():
     try:
         items = []
         last_evaluated_key = None
-        max_items_to_scan = 500  # Limit to prevent timeout
+        max_items_to_scan = 1000  # Scan same amount as get_threats for consistency
         
         # Paginate through results with limit
         items_scanned = 0
@@ -238,6 +241,10 @@ def get_stats():
             
             priority_score = calculate_priority_score(threat_score, source, event_type)
             priority_level = get_priority_level(priority_score)
+            
+            # Debug: Log a sample to understand the values
+            if len(items) > 0 and items.index(item) < 3:
+                logger.info(f"DEBUG Stats - threat_score: {threat_score}, priority_score: {priority_score}, priority_level: {priority_level}, source: {source}")
             
             # Count by priority_level instead of severity
             if priority_level in by_severity:

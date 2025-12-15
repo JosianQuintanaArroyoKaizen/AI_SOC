@@ -858,6 +858,21 @@
                         low: data.threats.LOW || []
                     };
                     
+                    // Update tab counts and stats from the actual threat counts
+                    if (data.counts_by_priority) {
+                        const counts = data.counts_by_priority;
+                        document.getElementById('critical-count').textContent = counts.CRITICAL || 0;
+                        document.getElementById('high-count').textContent = counts.HIGH || 0;
+                        document.getElementById('medium-count').textContent = counts.MEDIUM || 0;
+                        document.getElementById('low-count').textContent = counts.LOW || 0;
+                        document.getElementById('total-threats').textContent = data.count || 0;
+                        
+                        document.getElementById('tab-count-critical').textContent = counts.CRITICAL || 0;
+                        document.getElementById('tab-count-high').textContent = counts.HIGH || 0;
+                        document.getElementById('tab-count-medium').textContent = counts.MEDIUM || 0;
+                        document.getElementById('tab-count-low').textContent = counts.LOW || 0;
+                    }
+                    
                     // Render each severity level
                     ['critical', 'high', 'medium', 'low'].forEach(severity => {
                         renderThreats(severity, allThreats[severity]);
