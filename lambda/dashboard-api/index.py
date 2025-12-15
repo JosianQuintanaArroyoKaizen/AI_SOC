@@ -22,8 +22,12 @@ def calculate_priority_score(threat_score, source, event_type):
     Removes circular dependency on severity level.
     """
     # Convert threat_score to 0-100 range if it's in decimal format (0-1)
+    # If threat_score is already > 1, assume it's already in 0-100 scale
     if threat_score <= 1.0:
         base_score = threat_score * 100
+    elif threat_score > 100:
+        # Handle case where it was already multiplied by 100
+        base_score = threat_score / 100
     else:
         base_score = threat_score
     
@@ -142,13 +146,16 @@ def get_threats():
                 priority_score = calculate_priority_score(threat_score, source, event_type)
                 priority_level = get_priority_level(priority_score)
 
+                # Normalize threat_score for display (ensure it's in 0-100 range)
+                display_threat_score = threat_score if threat_score > 1.0 else threat_score * 100
+
                 threat = {
                     'alert_id': deserialized_item.get('alert_id', 'N/A'),
                     'timestamp': deserialized_item.get('timestamp', 'N/A'),
                     'severity': severity,
                     'priority_score': priority_score,
                     'priority_level': priority_level,
-                    'threat_score': threat_score * 100,
+                    'threat_score': display_threat_score,
                     'event_type': event_type,
                     'source': source,
                     'raw_event': raw_event,
@@ -156,7 +163,7 @@ def get_threats():
                         'prediction_label': prediction_label,
                         'model_version': model_version,
                         'evaluated_at': evaluated_at,
-                        'threat_score': threat_score * 100
+                        'threat_score': display_threat_score
                     }
                 }
                 # Ensure priority_level exists in dictionary
