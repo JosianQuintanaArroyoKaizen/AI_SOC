@@ -28,6 +28,7 @@ ENV/
 
 # IDE
 .vscode/
+lambda/dashboard-api/dashboard-api.zip
 .idea/
 *.swp
 *.swo

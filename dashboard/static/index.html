@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI-SOC Threat Dashboard</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -610,8 +611,8 @@
         }
         
         function renderThreatCard(threat) {
-            const severityClass = `severity-${(threat.severity || 'unknown').toLowerCase()}`;
-            const badgeClass = `badge-${(threat.severity || 'unknown').toLowerCase()}`;
+            const severityClass = `severity-${(threat.priority_level || threat.severity || 'unknown').toLowerCase()}`;
+            const badgeClass = `badge-${(threat.priority_level || threat.severity || 'unknown').toLowerCase()}`;
             
             const bedrock = threat.bedrock_analysis || {};
             const hasAIAnalysis = bedrock.risk_score && !bedrock.error;
@@ -625,7 +626,7 @@
                 <div class="threat-card">
                     <div class="threat-header">
                         <div class="threat-title">${threat.event_type || 'Unknown Threat'}</div>
-                        <span class="badge ${badgeClass}">${threat.severity || 'UNKNOWN'}</span>
+                        <span class="badge ${badgeClass}">${threat.priority_level || threat.severity || 'UNKNOWN'}</span>
                     </div>
                     
                     <div class="threat-meta">
@@ -798,7 +799,12 @@
         
         function loadStats() {
             fetch(`${API_BASE_URL}/stats`)
-                .then(res => res.json())
+                .then(res => {
+                    if (!res.ok) {
+                        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+                    }
+                    return res.json();
+                })
                 .then(data => {
                     if (data.success) {
                         document.getElementById('total-threats').textContent = data.stats.total_threats;
@@ -806,14 +812,19 @@
                         document.getElementById('high-count').textContent = data.stats.by_severity.HIGH || 0;
                         document.getElementById('medium-count').textContent = data.stats.by_severity.MEDIUM || 0;
                         document.getElementById('low-count').textContent = data.stats.by_severity.LOW || 0;
-                        document.getElementById('auto-remediated').textContent = data.stats.auto_remediated;
+                        document.getElementById('auto-remediated').textContent = data.stats.auto_remediated || 0;
                         
                         // Update tab counts
                         document.getElementById('tab-count-critical').textContent = data.stats.by_severity.CRITICAL || 0;
                         document.getElementById('tab-count-high').textContent = data.stats.by_severity.HIGH || 0;
                         document.getElementById('tab-count-medium').textContent = data.stats.by_severity.MEDIUM || 0;
                         document.getElementById('tab-count-low').textContent = data.stats.by_severity.LOW || 0;
+                    } else {
+                        console.error('Stats API returned error:', data.error);
                     }
+                })
+                .catch(error => {
+                    console.error('Failed to load stats:', error);
                 });
         }
         
@@ -824,7 +835,12 @@
             });
             
             fetch(`${API_BASE_URL}/threats`)
-                .then(res => res.json())
+                .then(res => {
+                    if (!res.ok) {
+                        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+                    }
+                    return res.json();
+                })
                 .then(data => {
                     if (!data.success) {
                         ['critical', 'high', 'medium', 'low'].forEach(severity => {
@@ -845,6 +861,13 @@
                     // Render each severity level
                     ['critical', 'high', 'medium', 'low'].forEach(severity => {
                         renderThreats(severity, allThreats[severity]);
+                    });
+                })
+                .catch(error => {
+                    console.error('Failed to load threats:', error);
+                    ['critical', 'high', 'medium', 'low'].forEach(severity => {
+                        document.getElementById(`threat-list-${severity}`).innerHTML = 
+                            `<div class="loading">Failed to load data. Please refresh.</div>`;
                     });
                 });
             

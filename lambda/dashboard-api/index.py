@@ -216,18 +216,27 @@ def get_stats():
                 break
         
         total = len(items)
-        by_severity = {'CRITICAL': 0, 'HIGH': 0, 'MEDIUM': 0, 'LOW': 0, 'UNKNOWN': 0}
+        by_severity = {'CRITICAL': 0, 'HIGH': 0, 'MEDIUM': 0, 'LOW': 0}
         high_threat = 0
         auto_remediated = 0
         
         for item in items:
             deserialized_item = {k: deserialize_dynamodb_item(v) for k, v in item.items()}
-            severity = deserialized_item.get('severity', 'UNKNOWN')
-            by_severity[severity] = by_severity.get(severity, 0) + 1
             
-            # Count high threat scores
+            # Calculate priority_level the same way as in get_threats()
             ml_prediction = deserialized_item.get('ml_prediction', {})
             threat_score = float(ml_prediction.get('threat_score', 0))
+            source = deserialized_item.get('source', 'unknown')
+            event_type = deserialized_item.get('event_type', 'Unknown')
+            
+            priority_score = calculate_priority_score(threat_score, source, event_type)
+            priority_level = get_priority_level(priority_score)
+            
+            # Count by priority_level instead of severity
+            if priority_level in by_severity:
+                by_severity[priority_level] += 1
+            
+            # Count high threat scores
             if threat_score > 0.7:
                 high_threat += 1
             
