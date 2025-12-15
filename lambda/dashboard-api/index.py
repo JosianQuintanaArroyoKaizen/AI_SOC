@@ -142,9 +142,18 @@ def get_threats():
                 source = deserialized_item.get('source', 'unknown')
                 event_type = deserialized_item.get('event_type', 'Unknown')
                 
-                # Calculate priority score using the same logic as alert-triage
-                priority_score = calculate_priority_score(threat_score, source, event_type)
-                priority_level = get_priority_level(priority_score)
+                # Use stored priority_level from triage if available, otherwise calculate
+                stored_priority = deserialized_item.get('triage', {}).get('priority_level') if isinstance(deserialized_item.get('triage'), dict) else None
+                stored_priority_score = deserialized_item.get('triage', {}).get('priority_score') if isinstance(deserialized_item.get('triage'), dict) else None
+                
+                if stored_priority and stored_priority_score:
+                    # Use the priority level that was calculated during triage
+                    priority_level = stored_priority
+                    priority_score = float(stored_priority_score)
+                else:
+                    # Fallback: calculate priority score using the same logic as alert-triage
+                    priority_score = calculate_priority_score(threat_score, source, event_type)
+                    priority_level = get_priority_level(priority_score)
 
                 # Normalize threat_score for display (ensure it's in 0-100 range)
                 display_threat_score = threat_score if threat_score > 1.0 else threat_score * 100
@@ -233,24 +242,35 @@ def get_stats():
         for item in items:
             deserialized_item = {k: deserialize_dynamodb_item(v) for k, v in item.items()}
             
-            # Calculate priority_level the same way as in get_threats()
-            ml_prediction = deserialized_item.get('ml_prediction', {})
-            threat_score = float(ml_prediction.get('threat_score', 0))
-            source = deserialized_item.get('source', 'unknown')
-            event_type = deserialized_item.get('event_type', 'Unknown')
+            # Use stored priority_level from triage if available, otherwise calculate
+            stored_priority = deserialized_item.get('triage', {}).get('priority_level') if isinstance(deserialized_item.get('triage'), dict) else None
+            stored_priority_score = deserialized_item.get('triage', {}).get('priority_score') if isinstance(deserialized_item.get('triage'), dict) else None
             
-            priority_score = calculate_priority_score(threat_score, source, event_type)
-            priority_level = get_priority_level(priority_score)
+            if stored_priority and stored_priority_score:
+                # Use the priority level that was calculated during triage
+                priority_level = stored_priority
+                priority_score = float(stored_priority_score)
+            else:
+                # Fallback: Calculate priority_level the same way as in get_threats()
+                ml_prediction = deserialized_item.get('ml_prediction', {})
+                threat_score = float(ml_prediction.get('threat_score', 0))
+                source = deserialized_item.get('source', 'unknown')
+                event_type = deserialized_item.get('event_type', 'Unknown')
+                
+                priority_score = calculate_priority_score(threat_score, source, event_type)
+                priority_level = get_priority_level(priority_score)
             
-            # Debug: Log a sample to understand the values
-            if len(items) > 0 and items.index(item) < 3:
-                logger.info(f"DEBUG Stats - threat_score: {threat_score}, priority_score: {priority_score}, priority_level: {priority_level}, source: {source}")
+            # Debug: Log first few samples to understand the values
+            if items.index(item) < 3:
+                logger.info(f"DEBUG Stats - priority_score: {priority_score}, priority_level: {priority_level}, stored: {stored_priority}")
             
             # Count by priority_level instead of severity
             if priority_level in by_severity:
                 by_severity[priority_level] += 1
             
             # Count high threat scores
+            ml_prediction = deserialized_item.get('ml_prediction', {})
+            threat_score = float(ml_prediction.get('threat_score', 0))
             if threat_score > 0.7:
                 high_threat += 1
             
