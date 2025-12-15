@@ -51,26 +51,25 @@ jobs:
           else
             echo "✅ Found API endpoint: $API_ENDPOINT"
             
-            # Create a temporary file with the updated API endpoint
-            sed "s|https://YOUR_API_ID.execute-api.YOUR_REGION.amazonaws.com|${API_ENDPOINT}|g" \
-              dashboard/templates/threats.html > /tmp/threats_updated.html
+            # Update API endpoint in the static index.html
+            sed "s|https://rstevhgym8.execute-api.eu-central-1.amazonaws.com|${API_ENDPOINT}|g" \
+              dashboard/static/index.html > /tmp/index_updated.html
             
             # Use the updated file
-            mv /tmp/threats_updated.html dashboard/templates/threats.html
+            mv /tmp/index_updated.html dashboard/static/index.html
           fi
           
-          # Copy threats.html as index.html (main page)
-          aws s3 cp dashboard/templates/threats.html s3://${{ env.S3_BUCKET }}/index.html \
-            --region ${{ env.AWS_REGION }} \
-            --cache-control "public, max-age=300" \
-            --content-type "text/html"
-          
-          # Sync static assets if they exist
+          # Sync all static files including index.html to S3
           if [ -d "dashboard/static" ]; then
-            aws s3 sync dashboard/static/ s3://${{ env.S3_BUCKET }}/static/ \
+            aws s3 sync dashboard/static/ s3://${{ env.S3_BUCKET }}/ \
               --region ${{ env.AWS_REGION }} \
               --delete \
-              --cache-control "public, max-age=31536000"
+              --cache-control "public, max-age=300"
+            
+            echo "✅ Synced dashboard/static/ to S3 bucket root"
+          else
+            echo "❌ Error: dashboard/static directory not found"
+            exit 1
           fi
           
           echo "✅ Threat dashboard deployed successfully"
