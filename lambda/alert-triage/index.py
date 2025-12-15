@@ -12,11 +12,10 @@ def handler(event, context):
 
     try:
         threat_score = event.get("ml_prediction", {}).get("threat_score", 0)
-        severity = event.get("severity", "LOW")
         source = event.get("source", "unknown")
         event_type = event.get("event_type", "unknown")
 
-        priority_score = calculate_priority(threat_score, severity, source, event_type)
+        priority_score = calculate_priority(threat_score, source, event_type)
         triage_info = {
             "priority_score": priority_score,
             "priority_level": get_priority_level(priority_score),
@@ -40,18 +39,52 @@ def handler(event, context):
         return event
 
 
-def calculate_priority(threat_score, severity, source, event_type):
-    """Blend ML output, severity, and context into a 0-100 priority."""
-    severity_weights = {"CRITICAL": 40, "HIGH": 30, "MEDIUM": 20, "LOW": 10}
-    source_weights = {"aws.guardduty": 1.2, "aws.securityhub": 1.1, "aws.cloudtrail": 1.0}
-    critical_events = ["GuardDuty Finding", "UnauthorizedAccess", "Recon", "Trojan"]
-
-    base_score = (threat_score * 0.6) + severity_weights.get(severity, 10)
+def calculate_priority(threat_score, source, event_type):
+    """
+    Calculate priority score based on ML threat score, source trust, and event criticality.
+    
+    Args:
+        threat_score: ML model confidence score (0-1 range, typically)
+        source: Event source (e.g., 'aws.guardduty', 'aws.securityhub')
+        event_type: Type of security event
+    
+    Returns:
+        Priority score (0-100)
+    """
+    # Convert threat_score to 0-100 range if it's in decimal format (0-1)
+    if threat_score <= 1.0:
+        base_score = threat_score * 100
+    else:
+        base_score = threat_score
+    
+    # Source trust multipliers - more reliable sources get higher weight
+    source_weights = {
+        "aws.guardduty": 1.2,      # GuardDuty is purpose-built for threat detection
+        "aws.securityhub": 1.15,   # SecurityHub aggregates findings
+        "aws.cloudtrail": 1.0,     # CloudTrail is raw audit logs
+        "aws.config": 1.05,        # Config for compliance issues
+    }
+    
+    # Critical event types that warrant immediate attention
+    critical_events = [
+        "GuardDuty Finding",
+        "UnauthorizedAccess",
+        "Recon",
+        "Trojan",
+        "Backdoor",
+        "Cryptomining",
+        "RootCredentials",
+        "IAMUser/AnomalousBehavior"
+    ]
+    
+    # Apply source weight
     adjusted_score = base_score * source_weights.get(source, 1.0)
-
+    
+    # Boost score for critical event types
     if any(keyword in event_type for keyword in critical_events):
-        adjusted_score *= 1.3
-
+        adjusted_score *= 1.25
+    
+    # Ensure score is within 0-100 range
     return min(100, max(0, adjusted_score))
 
 

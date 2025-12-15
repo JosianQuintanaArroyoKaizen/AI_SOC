@@ -11,6 +11,46 @@ from decimal import Decimal
 dynamodb = boto3.client('dynamodb')
 TABLE_NAME = os.environ.get('TABLE_NAME', 'ai-soc-dev-state')
 
+def calculate_priority_score(threat_score, source, event_type):
+    """
+    Calculate priority score matching alert-triage logic.
+    Removes circular dependency on severity level.
+    """
+    # Convert threat_score to 0-100 range if it's in decimal format (0-1)
+    if threat_score <= 1.0:
+        base_score = threat_score * 100
+    else:
+        base_score = threat_score
+    
+    # Source trust multipliers
+    source_weights = {
+        "aws.guardduty": 1.2,
+        "aws.securityhub": 1.15,
+        "aws.cloudtrail": 1.0,
+        "aws.config": 1.05,
+    }
+    
+    # Critical event types
+    critical_events = [
+        "GuardDuty Finding",
+        "UnauthorizedAccess",
+        "Recon",
+        "Trojan",
+        "Backdoor",
+        "Cryptomining",
+        "RootCredentials",
+        "IAMUser/AnomalousBehavior"
+    ]
+    
+    # Apply source weight
+    adjusted_score = base_score * source_weights.get(source, 1.0)
+    
+    # Boost for critical event types
+    if any(keyword in event_type for keyword in critical_events):
+        adjusted_score *= 1.25
+    
+    return min(100, max(0, adjusted_score))
+
 class DecimalEncoder(json.JSONEncoder):
     """Helper to convert Decimal to int/float for JSON"""
     def default(self, obj):
@@ -79,8 +119,11 @@ def get_threats():
                 evaluated_at = ml_prediction.get('evaluated_at')
                 raw_event = deserialized_item.get('raw_event', {})
                 severity = deserialized_item.get('severity', 'UNKNOWN')
-                severity_weights = {'CRITICAL': 100, 'HIGH': 75, 'MEDIUM': 50, 'LOW': 25, 'UNKNOWN': 0}
-                priority_score = (threat_score * 100) * 0.6 + severity_weights.get(severity, 0) * 0.4
+                source = deserialized_item.get('source', 'unknown')
+                event_type = deserialized_item.get('event_type', 'Unknown')
+                
+                # Calculate priority score using the same logic as alert-triage
+                priority_score = calculate_priority_score(threat_score, source, event_type)
 
                 threat = {
                     'alert_id': deserialized_item.get('alert_id', 'N/A'),
@@ -88,8 +131,8 @@ def get_threats():
                     'severity': severity,
                     'priority_score': priority_score,
                     'threat_score': threat_score * 100,
-                    'event_type': deserialized_item.get('event_type', 'Unknown'),
-                    'source': deserialized_item.get('source', 'Unknown'),
+                    'event_type': event_type,
+                    'source': source,
                     'raw_event': raw_event,
                     'ml_prediction': {
                         'prediction_label': prediction_label,
@@ -129,20 +172,26 @@ def get_threats():
         })
 
 def get_stats():
-    """Get threat statistics"""
+    """Get threat statistics - with limit to prevent timeout"""
     try:
         items = []
         last_evaluated_key = None
+        max_items_to_scan = 500  # Limit to prevent timeout
         
-        # Paginate through all results
-        while True:
-            scan_kwargs = {'TableName': TABLE_NAME}
+        # Paginate through results with limit
+        items_scanned = 0
+        while items_scanned < max_items_to_scan:
+            scan_kwargs = {
+                'TableName': TABLE_NAME,
+                'Limit': min(100, max_items_to_scan - items_scanned)
+            }
             if last_evaluated_key:
                 scan_kwargs['ExclusiveStartKey'] = last_evaluated_key
             
             result = dynamodb.scan(**scan_kwargs)
             items.extend(result.get('Items', []))
             
+            items_scanned += len(result.get('Items', []))
             last_evaluated_key = result.get('LastEvaluatedKey')
             if not last_evaluated_key:
                 break
@@ -150,6 +199,7 @@ def get_stats():
         total = len(items)
         by_severity = {'CRITICAL': 0, 'HIGH': 0, 'MEDIUM': 0, 'LOW': 0, 'UNKNOWN': 0}
         high_threat = 0
+        auto_remediated = 0
         
         for item in items:
             deserialized_item = {k: deserialize_dynamodb_item(v) for k, v in item.items()}
@@ -161,13 +211,18 @@ def get_stats():
             threat_score = float(ml_prediction.get('threat_score', 0))
             if threat_score > 0.7:
                 high_threat += 1
+            
+            # Count auto-remediated (you can adjust this logic based on your data)
+            if deserialized_item.get('remediation_status') == 'auto_remediated':
+                auto_remediated += 1
         
         return response(200, {
             'success': True,
             'stats': {
                 'total_threats': total,
                 'by_severity': by_severity,
-                'high_threat_score': high_threat
+                'high_threat_score': high_threat,
+                'auto_remediated': auto_remediated
             }
         })
     
