@@ -6,7 +6,12 @@ Provides REST endpoints for threat dashboard
 import json
 import boto3
 import os
+import logging
 from decimal import Decimal
+
+# Set up logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 dynamodb = boto3.client('dynamodb')
 TABLE_NAME = os.environ.get('TABLE_NAME', 'ai-soc-dev-state')
@@ -43,13 +48,24 @@ def calculate_priority_score(threat_score, source, event_type):
     ]
     
     # Apply source weight
-    adjusted_score = base_score * source_weights.get(source, 1.0)
+    source_multiplier = source_weights.get(source, 1.0)
+    adjusted_score = base_score * source_multiplier
     
     # Boost for critical event types
     if any(keyword in event_type for keyword in critical_events):
         adjusted_score *= 1.25
     
     return min(100, max(0, adjusted_score))
+
+def get_priority_level(score):
+    """Convert priority score to priority level (matching alert-triage logic)"""
+    if score >= 90:
+        return "CRITICAL"
+    if score >= 70:
+        return "HIGH"
+    if score >= 40:
+        return "MEDIUM"
+    return "LOW"
 
 class DecimalEncoder(json.JSONEncoder):
     """Helper to convert Decimal to int/float for JSON"""
@@ -94,7 +110,7 @@ def response(status_code, body):
 def get_threats():
     """Get all threats from DynamoDB"""
     try:
-        threats_by_severity = {'CRITICAL': [], 'HIGH': [], 'MEDIUM': [], 'LOW': [], 'UNKNOWN': []}
+        threats_by_priority = {'CRITICAL': [], 'HIGH': [], 'MEDIUM': [], 'LOW': [], 'UNKNOWN': []}
         last_evaluated_key = None
         max_items_to_scan = 300  # Reduced limit - scan fewer items for faster response
 
@@ -124,12 +140,14 @@ def get_threats():
                 
                 # Calculate priority score using the same logic as alert-triage
                 priority_score = calculate_priority_score(threat_score, source, event_type)
+                priority_level = get_priority_level(priority_score)
 
                 threat = {
                     'alert_id': deserialized_item.get('alert_id', 'N/A'),
                     'timestamp': deserialized_item.get('timestamp', 'N/A'),
                     'severity': severity,
                     'priority_score': priority_score,
+                    'priority_level': priority_level,
                     'threat_score': threat_score * 100,
                     'event_type': event_type,
                     'source': source,
@@ -141,24 +159,24 @@ def get_threats():
                         'threat_score': threat_score * 100
                     }
                 }
-                if severity not in threats_by_severity:
-                    threats_by_severity['UNKNOWN'].append(threat)
+                # Ensure priority_level exists in dictionary
+                if priority_level not in threats_by_priority:
+                    threats_by_priority['UNKNOWN'].append(threat)
                 else:
-                    threats_by_severity[severity].append(threat)
+                    threats_by_priority[priority_level].append(threat)
 
             items_scanned += len(result.get('Items', []))
             last_evaluated_key = result.get('LastEvaluatedKey')
             if not last_evaluated_key:
                 break
 
-        # For each severity, sort by priority_score and take top 50
-        # Also reduce max items to scan since we only need 50 per severity
+        # For each priority level, sort by priority_score and take top 50
         top_threats = {}
         total_count = 0
-        for severity, threat_list in threats_by_severity.items():
+        for priority_level, threat_list in threats_by_priority.items():
             sorted_threats = sorted(threat_list, key=lambda x: x['priority_score'], reverse=True)
-            top_threats[severity] = sorted_threats[:50]
-            total_count += len(top_threats[severity])
+            top_threats[priority_level] = sorted_threats[:50]
+            total_count += len(top_threats[priority_level])
 
         return response(200, {
             'success': True,
@@ -166,6 +184,7 @@ def get_threats():
             'threats': top_threats
         })
     except Exception as e:
+        logger.error(f"Error in get_threats: {str(e)}", exc_info=True)
         return response(500, {
             'success': False,
             'error': str(e)
