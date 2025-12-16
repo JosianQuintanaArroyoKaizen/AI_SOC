@@ -797,7 +797,9 @@
             listElement.innerHTML = threats.map(threat => renderThreatCard(threat)).join('');
         }
         
-        function loadStats() {
+        function loadAutoRemediatedStats() {
+            // Only fetch auto-remediated count from stats endpoint
+            // All other counts come from the threats endpoint to avoid conflicts
             fetch(`${API_BASE_URL}/stats`)
                 .then(res => {
                     if (!res.ok) {
@@ -807,24 +809,13 @@
                 })
                 .then(data => {
                     if (data.success) {
-                        document.getElementById('total-threats').textContent = data.stats.total_threats;
-                        document.getElementById('critical-count').textContent = data.stats.by_severity.CRITICAL || 0;
-                        document.getElementById('high-count').textContent = data.stats.by_severity.HIGH || 0;
-                        document.getElementById('medium-count').textContent = data.stats.by_severity.MEDIUM || 0;
-                        document.getElementById('low-count').textContent = data.stats.by_severity.LOW || 0;
                         document.getElementById('auto-remediated').textContent = data.stats.auto_remediated || 0;
-                        
-                        // Update tab counts
-                        document.getElementById('tab-count-critical').textContent = data.stats.by_severity.CRITICAL || 0;
-                        document.getElementById('tab-count-high').textContent = data.stats.by_severity.HIGH || 0;
-                        document.getElementById('tab-count-medium').textContent = data.stats.by_severity.MEDIUM || 0;
-                        document.getElementById('tab-count-low').textContent = data.stats.by_severity.LOW || 0;
                     } else {
                         console.error('Stats API returned error:', data.error);
                     }
                 })
                 .catch(error => {
-                    console.error('Failed to load stats:', error);
+                    console.error('Failed to load auto-remediated stats:', error);
                 });
         }
         
@@ -858,15 +849,19 @@
                         low: data.threats.LOW || []
                     };
                     
-                    // Update tab counts and stats from the actual threat counts
+                    // Update both tab counts and stat cards from the actual threat counts
+                    // This is the single source of truth for all severity counts
                     if (data.counts_by_priority) {
                         const counts = data.counts_by_priority;
+                        
+                        // Update stat cards at the top
+                        document.getElementById('total-threats').textContent = data.count || 0;
                         document.getElementById('critical-count').textContent = counts.CRITICAL || 0;
                         document.getElementById('high-count').textContent = counts.HIGH || 0;
                         document.getElementById('medium-count').textContent = counts.MEDIUM || 0;
                         document.getElementById('low-count').textContent = counts.LOW || 0;
-                        document.getElementById('total-threats').textContent = data.count || 0;
                         
+                        // Update tab counts (same values)
                         document.getElementById('tab-count-critical').textContent = counts.CRITICAL || 0;
                         document.getElementById('tab-count-high').textContent = counts.HIGH || 0;
                         document.getElementById('tab-count-medium').textContent = counts.MEDIUM || 0;
@@ -886,7 +881,8 @@
                     });
                 });
             
-            loadStats();
+            // Load auto-remediated stats separately (doesn't conflict with threat counts)
+            loadAutoRemediatedStats();
         }
         
         // Load on page load
