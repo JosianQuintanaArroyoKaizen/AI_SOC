@@ -373,7 +373,7 @@
 <body>
     <div class="container">
         <h1>🛡️ AI-SOC Threat Dashboard</h1>
-        <p class="subtitle">Real-time threat detection powered by Claude 3.7 Sonnet AI</p>
+        <p class="subtitle">Real-time threat detection for Cloudtrail and GuardDuty</p>
         
         <button class="refresh-btn" onclick="loadThreats()">🔄 Refresh</button>
         <div style="clear: both;"></div>
@@ -834,9 +834,21 @@
                 })
                 .then(data => {
                     if (!data.success) {
+                        // Set all counts to 0 on API error
+                        document.getElementById('total-threats').textContent = '0';
+                        document.getElementById('critical-count').textContent = '0';
+                        document.getElementById('high-count').textContent = '0';
+                        document.getElementById('medium-count').textContent = '0';
+                        document.getElementById('low-count').textContent = '0';
+                        document.getElementById('tab-count-critical').textContent = '0';
+                        document.getElementById('tab-count-high').textContent = '0';
+                        document.getElementById('tab-count-medium').textContent = '0';
+                        document.getElementById('tab-count-low').textContent = '0';
+                        
+                        // Show error message
                         ['critical', 'high', 'medium', 'low'].forEach(severity => {
                             document.getElementById(`threat-list-${severity}`).innerHTML = 
-                                `<div class="loading">Error: ${data.error}</div>`;
+                                `<div class="loading" style="color: #ff4757;">❌ API Error: ${data.error || 'Unknown error'}</div>`;
                         });
                         return;
                     }
@@ -849,24 +861,38 @@
                         low: data.threats.LOW || []
                     };
                     
-                    // Update both tab counts and stat cards from the actual threat counts
-                    // This is the single source of truth for all severity counts
+                    // Calculate counts from threats if counts_by_priority is not available
+                    // (fallback for older API versions)
+                    let counts = {};
                     if (data.counts_by_priority) {
-                        const counts = data.counts_by_priority;
-                        
-                        // Update stat cards at the top
-                        document.getElementById('total-threats').textContent = data.count || 0;
-                        document.getElementById('critical-count').textContent = counts.CRITICAL || 0;
-                        document.getElementById('high-count').textContent = counts.HIGH || 0;
-                        document.getElementById('medium-count').textContent = counts.MEDIUM || 0;
-                        document.getElementById('low-count').textContent = counts.LOW || 0;
-                        
-                        // Update tab counts (same values)
-                        document.getElementById('tab-count-critical').textContent = counts.CRITICAL || 0;
-                        document.getElementById('tab-count-high').textContent = counts.HIGH || 0;
-                        document.getElementById('tab-count-medium').textContent = counts.MEDIUM || 0;
-                        document.getElementById('tab-count-low').textContent = counts.LOW || 0;
+                        // Use provided counts (preferred - includes all threats, not just top 50)
+                        counts = data.counts_by_priority;
+                    } else {
+                        // Fallback: calculate from returned threats (only shows counts for top 50)
+                        counts = {
+                            CRITICAL: allThreats.critical.length,
+                            HIGH: allThreats.high.length,
+                            MEDIUM: allThreats.medium.length,
+                            LOW: allThreats.low.length
+                        };
+                        console.warn('API response missing counts_by_priority - using counts from returned threats only');
                     }
+                    
+                    // Calculate total from counts
+                    const totalCount = data.count || (counts.CRITICAL + counts.HIGH + counts.MEDIUM + counts.LOW);
+                    
+                    // Update stat cards at the top
+                    document.getElementById('total-threats').textContent = totalCount;
+                    document.getElementById('critical-count').textContent = counts.CRITICAL || 0;
+                    document.getElementById('high-count').textContent = counts.HIGH || 0;
+                    document.getElementById('medium-count').textContent = counts.MEDIUM || 0;
+                    document.getElementById('low-count').textContent = counts.LOW || 0;
+                    
+                    // Update tab counts (same values)
+                    document.getElementById('tab-count-critical').textContent = counts.CRITICAL || 0;
+                    document.getElementById('tab-count-high').textContent = counts.HIGH || 0;
+                    document.getElementById('tab-count-medium').textContent = counts.MEDIUM || 0;
+                    document.getElementById('tab-count-low').textContent = counts.LOW || 0;
                     
                     // Render each severity level
                     ['critical', 'high', 'medium', 'low'].forEach(severity => {
@@ -875,9 +901,22 @@
                 })
                 .catch(error => {
                     console.error('Failed to load threats:', error);
+                    
+                    // Set all counts to 0 on error
+                    document.getElementById('total-threats').textContent = '0';
+                    document.getElementById('critical-count').textContent = '0';
+                    document.getElementById('high-count').textContent = '0';
+                    document.getElementById('medium-count').textContent = '0';
+                    document.getElementById('low-count').textContent = '0';
+                    document.getElementById('tab-count-critical').textContent = '0';
+                    document.getElementById('tab-count-high').textContent = '0';
+                    document.getElementById('tab-count-medium').textContent = '0';
+                    document.getElementById('tab-count-low').textContent = '0';
+                    
+                    // Show error message in threat lists
                     ['critical', 'high', 'medium', 'low'].forEach(severity => {
                         document.getElementById(`threat-list-${severity}`).innerHTML = 
-                            `<div class="loading">Failed to load data. Please refresh.</div>`;
+                            `<div class="loading" style="color: #ff4757;">❌ Failed to load data: ${error.message || 'Unknown error'}. Please refresh.</div>`;
                     });
                 });
             
